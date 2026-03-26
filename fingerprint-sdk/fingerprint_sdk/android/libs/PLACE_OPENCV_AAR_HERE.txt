@@ -1,0 +1,9 @@
+Download opencv-android-4.8.x.aar from:
+  https://github.com/opencv/opencv/releases/tag/4.8.0
+  (OpenCV-4.8.0-android-sdk.zip → sdk/native/libs → repackaged as AAR)
+
+Or use the prebuilt AAR from:
+  https://search.maven.org/artifact/org.opencv/opencv/4.8.0/aar
+
+Rename the file to: opencv-android-4.8.x.aar
+Place it in this directory: fingerprint_sdk/android/libs/

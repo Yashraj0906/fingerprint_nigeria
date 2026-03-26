@@ -1,0 +1,26 @@
+name: fingerprint_sdk
+description: Contactless fingerprint capture SDK with real-time feedback, quality scoring, and liveness detection.
+version: 1.0.0
+homepage: https://yellowsense.in
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.yellowsense.fingerprint_sdk
+        pluginClass: FingerprintSdkPlugin
+      ios:
+        pluginClass: FingerprintSdkPlugin
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0

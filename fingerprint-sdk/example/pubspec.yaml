@@ -1,0 +1,17 @@
+name: fingerprint_example
+description: Sample integration app for YellowSense Fingerprint SDK.
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  fingerprint_sdk:
+    path: ../fingerprint_sdk
+  permission_handler: ^11.0.0
+
+flutter:
+  uses-material-design: true
