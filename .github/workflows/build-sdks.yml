@@ -28,9 +28,25 @@ jobs:
         with:
           gradle-version: '8.4'
 
+      - name: Download OpenCV Android SDK and extract AAR
+        run: |
+          cd /tmp
+          wget -q -O opencv-android.zip \
+            "https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip"
+          unzip -q opencv-android.zip
+          # Build the OpenCV library AAR
+          cd OpenCV-android-sdk/sdk
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon -q
+          # Copy into our libs/ folder
+          mkdir -p $GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs
+          cp build/outputs/aar/opencv-release.aar \
+            $GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs/opencv.aar
+          echo "OpenCV AAR placed in libs/"
+
       - name: Build release AAR
         working-directory: fingerprint-sdk/fingerprint_sdk/android
-        run: gradle assembleRelease
+        run: gradle assembleRelease --no-daemon
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
@@ -65,52 +81,47 @@ jobs:
       - name: Archive for iOS device (arm64)
         working-directory: fingerprint-sdk/fingerprint_sdk/ios
         run: |
+          set -eo pipefail
           xcodebuild archive \
             -workspace FingerprintSDK.xcworkspace \
             -scheme FingerprintSDK \
             -destination "generic/platform=iOS" \
-            -archivePath build/ios-device.xcarchive \
+            -archivePath "$PWD/build/ios-device.xcarchive" \
             SKIP_INSTALL=NO \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            | xcpretty
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
 
       - name: Archive for iOS Simulator (arm64 + x86_64)
         working-directory: fingerprint-sdk/fingerprint_sdk/ios
         run: |
+          set -eo pipefail
           xcodebuild archive \
             -workspace FingerprintSDK.xcworkspace \
             -scheme FingerprintSDK \
             -destination "generic/platform=iOS Simulator" \
-            -archivePath build/ios-simulator.xcarchive \
+            -archivePath "$PWD/build/ios-simulator.xcarchive" \
             SKIP_INSTALL=NO \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            | xcpretty
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
 
       - name: Create XCFramework
         working-directory: fingerprint-sdk/fingerprint_sdk/ios
         run: |
-          echo "=== Device archive frameworks ==="
-          find build/ios-device.xcarchive -name "*.framework" | head -20
-          echo "=== Simulator archive frameworks ==="
-          find build/ios-simulator.xcarchive -name "*.framework" | head -20
+          echo "=== Device archive contents ==="
+          find "$PWD/build/ios-device.xcarchive" -name "*.framework" | head -20
+          echo "=== Simulator archive contents ==="
+          find "$PWD/build/ios-simulator.xcarchive" -name "*.framework" | head -20
 
-          DEVICE_FW=$(find build/ios-device.xcarchive/Products -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
-          SIM_FW=$(find build/ios-simulator.xcarchive/Products -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
+          DEVICE_FW=$(find "$PWD/build/ios-device.xcarchive" -name "FingerprintSDK.framework" \
+            -not -path "*/dSYMs/*" | head -1)
+          SIM_FW=$(find "$PWD/build/ios-simulator.xcarchive" -name "FingerprintSDK.framework" \
+            -not -path "*/dSYMs/*" | head -1)
 
-          if [ -z "$DEVICE_FW" ]; then
-            DEVICE_FW=$(find build/ios-device.xcarchive -name "*.framework" -not -path "*/dSYMs/*" | head -1)
-          fi
-          if [ -z "$SIM_FW" ]; then
-            SIM_FW=$(find build/ios-simulator.xcarchive -name "*.framework" -not -path "*/dSYMs/*" | head -1)
-          fi
-
-          echo "Using device framework: $DEVICE_FW"
-          echo "Using simulator framework: $SIM_FW"
+          echo "Device framework: $DEVICE_FW"
+          echo "Simulator framework: $SIM_FW"
 
           xcodebuild -create-xcframework \
             -framework "$DEVICE_FW" \
             -framework "$SIM_FW" \
-            -output build/FingerprintSDK.xcframework
+            -output "$PWD/build/FingerprintSDK.xcframework"
 
       - name: Zip XCFramework
         working-directory: fingerprint-sdk/fingerprint_sdk/ios/build
