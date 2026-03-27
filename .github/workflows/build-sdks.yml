@@ -65,14 +65,38 @@ jobs:
           }
           ROOTBUILD
 
-          # AGP 8.x requires 'namespace' — inject it into OpenCV's android{} block
-          sed -i "s/android {/android {\n    namespace 'org.opencv'/" \
-            /tmp/OpenCV-android-sdk/sdk/build.gradle
+          # AGP 8.x requires 'namespace' and AIDL must be explicitly enabled.
+          # Also fix JVM target mismatch (javac=1.8, kotlinc must match).
+          # Use Python for safe single-pass patching of the android{} block.
+          python3 - <<'PYEOF'
+import re, sys
 
-          # Fix JVM target mismatch: javac targets 1.8, kotlinc must match
-          # Insert kotlinOptions before the existing compileOptions block
-          sed -i "s/compileOptions {/kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {/" \
-            /tmp/OpenCV-android-sdk/sdk/build.gradle
+path = '/tmp/OpenCV-android-sdk/sdk/build.gradle'
+with open(path) as f:
+    content = f.read()
+
+inject = (
+    "    namespace 'org.opencv'\n"
+    "    buildFeatures { aidl true }\n"
+)
+# Insert after the first 'android {' only
+content = content.replace('android {', 'android {\n' + inject, 1)
+
+# Add kotlinOptions before compileOptions (if not already present)
+if 'kotlinOptions' not in content:
+    content = content.replace(
+        'compileOptions {',
+        "kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {",
+        1
+    )
+
+with open(path, 'w') as f:
+    f.write(content)
+
+print("Patched build.gradle:")
+for i, line in enumerate(content.splitlines(), 1):
+    print(f"{i:3}: {line}")
+PYEOF
 
           gradle :sdk:assembleRelease --no-daemon -q
 

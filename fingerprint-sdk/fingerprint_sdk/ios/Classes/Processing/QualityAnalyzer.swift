@@ -60,7 +60,7 @@ enum QualityAnalyzer {
                 var dst = vImage_Buffer(data: dstPtr.baseAddress!, height: vImagePixelCount(h),
                                         width: vImagePixelCount(w), rowBytes: w)
                 vImageConvolve_Planar8(&src, &dst, nil, 0, 0, kernel, 3, 3, 0,
-                                       vImage_Flags(kvImageEdgeExtend))
+                                       0, vImage_Flags(kvImageEdgeExtend))
             }
         }
         let variance = dstData.map { Double($0) }.variance()

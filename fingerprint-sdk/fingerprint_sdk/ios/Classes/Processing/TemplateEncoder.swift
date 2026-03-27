@@ -168,8 +168,8 @@ enum TemplateEncoder {
 // MARK: - Helpers
 
 private extension Data {
-    mutating func appendBigEndian(_ v: UInt32) { var x = v.bigEndian; append(contentsOf: withUnsafeBytes(of: &x) { Array($0) }) }
-    mutating func appendBigEndian(_ v: UInt16) { var x = v.bigEndian; append(contentsOf: withUnsafeBytes(of: &x) { Array($0) }) }
+    mutating func appendBigEndian(_ v: UInt32) { var x = v.bigEndian; append(contentsOf: Swift.withUnsafeBytes(of: &x) { Array($0) }) }
+    mutating func appendBigEndian(_ v: UInt16) { var x = v.bigEndian; append(contentsOf: Swift.withUnsafeBytes(of: &x) { Array($0) }) }
 }
 
 private extension Comparable {

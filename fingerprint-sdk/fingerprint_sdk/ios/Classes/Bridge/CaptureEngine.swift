@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreImage
+import Flutter
 import Foundation
 import os.log
 
