@@ -3,9 +3,12 @@
 
 #import "OpenCVWrapper.h"
 
+// Import only what we use — avoids stitching headers that conflict with
+// Objective-C's NO macro (enum { NO, GAIN, ... } in exposure_compensate.hpp).
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdocumentation"
-#import <opencv2/opencv.hpp>
+#import <opencv2/core.hpp>
+#import <opencv2/imgproc.hpp>
 #pragma clang diagnostic pop
 
 // ─── CGImage ↔ cv::Mat Helpers ────────────────────────────────────────────────

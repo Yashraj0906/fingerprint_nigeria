@@ -71,7 +71,9 @@ jobs:
           #   3. kotlinOptions.jvmTarget must match javac target (both 1.8)
           # Use '0,/pattern/' GNU sed address to replace FIRST occurrence only.
           SDK_GRADLE=/tmp/OpenCV-android-sdk/sdk/build.gradle
-          sed -i "0,/android {/s/android {/android {\n    namespace 'org.opencv'\n    buildFeatures { aidl true }/" "$SDK_GRADLE"
+          # AGP 8.x: namespace required; aidl + buildConfig disabled by default.
+          # jvmTarget must match javac target (both 1.8).
+          sed -i "0,/android {/s/android {/android {\n    namespace 'org.opencv'\n    buildFeatures { aidl true; buildConfig true }/" "$SDK_GRADLE"
           sed -i "0,/compileOptions {/s/compileOptions {/kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {/" "$SDK_GRADLE"
           echo "=== Patched sdk/build.gradle ==="
           cat "$SDK_GRADLE"
