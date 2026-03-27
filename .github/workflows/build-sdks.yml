@@ -23,11 +23,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Gradle 7.4 is required to build the OpenCV 4.8.0 Android SDK
-      - name: Setup Gradle 7.4 for OpenCV build
+      - name: Setup Gradle 8.4
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '7.4'
+          gradle-version: '8.4'
 
       - name: Download OpenCV Android SDK and build AAR
         run: |
@@ -36,27 +35,42 @@ jobs:
             "https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip"
           unzip -q opencv.zip
 
-          SDK_DIR="/tmp/OpenCV-android-sdk/sdk"
-          cd "$SDK_DIR"
-          echo "=== SDK root contents ==="
-          ls .
+          # OpenCV sdk/ is a library MODULE, not a standalone project.
+          # We need a root project with buildscript declaring AGP.
+          ROOT="/tmp/opencv-build"
+          mkdir -p "$ROOT"
+          cd "$ROOT"
 
-          # Create settings.gradle if missing (needed for standalone Gradle build)
-          [ -f settings.gradle ] || echo 'rootProject.name = "opencv"' > settings.gradle
+          # Root settings.gradle
+          cat > settings.gradle << 'SETTINGS'
+          pluginManagement {
+            repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+            repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "opencv-android"
+          include ':sdk'
+          project(':sdk').projectDir = new File('/tmp/OpenCV-android-sdk/sdk')
+          SETTINGS
 
-          gradle assembleRelease --no-daemon -q
+          # Root build.gradle
+          cat > build.gradle << 'ROOTBUILD'
+          buildscript {
+            repositories { google(); mavenCentral() }
+            dependencies {
+              classpath 'com.android.tools.build:gradle:8.1.4'
+            }
+          }
+          ROOTBUILD
 
-          AAR=$(find . -name "*.aar" | head -1)
+          gradle :sdk:assembleRelease --no-daemon -q
+
+          AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
           echo "Found AAR: $AAR"
           mkdir -p "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs"
           cp "$AAR" "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs/opencv.aar"
-          echo "OpenCV AAR placed in libs/"
-
-      # Use Gradle 8.4 for our SDK build
-      - name: Setup Gradle 8.4 for SDK build
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
+          echo "Done — OpenCV AAR placed in libs/"
 
       - name: Build fingerprint_sdk release AAR
         working-directory: fingerprint-sdk/fingerprint_sdk/android
@@ -70,8 +84,7 @@ jobs:
           retention-days: 30
 
   # ─────────────────────────────────────────────
-  # iOS — produces FingerprintSDK.xcframework
-  # (device arm64 + simulator arm64/x86_64)
+  # iOS — produces fingerprint_sdk.xcframework
   # Flutter must be installed because the plugin imports Flutter
   # ─────────────────────────────────────────────
   build-ios-xcframework:
@@ -94,7 +107,11 @@ jobs:
         working-directory: fingerprint-sdk/example
         run: flutter pub get
 
-      - name: Pod install (resolves Flutter + OpenCV + plugin)
+      - name: Regenerate iOS native project (creates Podfile + xcodeproj)
+        working-directory: fingerprint-sdk/example
+        run: yes "" | flutter create --platforms ios . || true
+
+      - name: Pod install
         working-directory: fingerprint-sdk/example/ios
         run: pod install --repo-update
 
