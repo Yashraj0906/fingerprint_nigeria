@@ -271,7 +271,7 @@ class CaptureEngine(
                                 failureReason = classifyQualityFailure(quality)
                             )
                         }
-                        return@try
+                        continue
                     }
 
                     // ── Liveness check ──
@@ -285,7 +285,7 @@ class CaptureEngine(
                             errorMessage = liveness.reason ?: "Liveness check failed",
                             failureReason = "LIVENESS_FAIL"
                         )
-                        return@try
+                        continue
                     }
 
                     ridges = ImageProcessor.detectRidges(enhanced)
@@ -303,7 +303,7 @@ class CaptureEngine(
                         )
                     )
 
-                    val fingerCandidates = candidates[fingerId] ?: return@try
+                    val fingerCandidates = candidates[fingerId] ?: continue
                     if (fingerCandidates.size >= deviceProfile.framesPerFinger) {
                         val best = fingerCandidates.maxByOrNull { it.confidenceScore }!!
                         finaliseCapture(fingerId, best)
