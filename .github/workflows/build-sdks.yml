@@ -23,10 +23,24 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle 8.4
+      - name: Setup Gradle 8.4 (used for OpenCV standalone build)
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter precache Android artifacts
+        run: flutter precache --android
+
+      - name: Generate example Android project (creates gradlew + Flutter Gradle integration)
+        working-directory: fingerprint-sdk/example
+        run: |
+          flutter pub get
+          yes "" | flutter create --platforms android . || true
 
       - name: Download OpenCV Android SDK and build AAR
         run: |
@@ -65,14 +79,10 @@ jobs:
           }
           ROOTBUILD
 
-          # Patch OpenCV sdk/build.gradle for AGP 8.x:
-          #   1. namespace (required)
-          #   2. buildFeatures.aidl (disabled by default in AGP 8)
-          #   3. kotlinOptions.jvmTarget must match javac target (both 1.8)
-          # Use '0,/pattern/' GNU sed address to replace FIRST occurrence only.
+          # Patch OpenCV sdk/build.gradle for AGP 8.x (first occurrence only):
+          #   namespace, aidl + buildConfig (disabled by default in AGP 8),
+          #   and kotlinOptions.jvmTarget to match javac's 1.8 target.
           SDK_GRADLE=/tmp/OpenCV-android-sdk/sdk/build.gradle
-          # AGP 8.x: namespace required; aidl + buildConfig disabled by default.
-          # jvmTarget must match javac target (both 1.8).
           sed -i "0,/android {/s/android {/android {\n    namespace 'org.opencv'\n    buildFeatures { aidl true; buildConfig true }/" "$SDK_GRADLE"
           sed -i "0,/compileOptions {/s/compileOptions {/kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {/" "$SDK_GRADLE"
           echo "=== Patched sdk/build.gradle ==="
@@ -86,9 +96,11 @@ jobs:
           cp "$AAR" "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs/opencv.aar"
           echo "Done — OpenCV AAR placed in libs/"
 
-      - name: Build fingerprint_sdk release AAR
-        working-directory: fingerprint-sdk/fingerprint_sdk/android
-        run: gradle assembleRelease --no-daemon
+      - name: Build fingerprint_sdk release AAR (via example app Gradle)
+        working-directory: fingerprint-sdk/example/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
@@ -125,14 +137,22 @@ jobs:
         working-directory: fingerprint-sdk/example
         run: yes "" | flutter create --platforms ios . || true
 
-      - name: Patch Podfile for OpenCV2 static framework compatibility
+      - name: Patch Podfile for OpenCV2 compatibility
         working-directory: fingerprint-sdk/example/ios
         run: |
           # OpenCV2 ships as a static framework; Flutter's use_frameworks! requires dynamic.
-          # Changing to :linkage => :static makes both compatible.
           sed -i '' 's/use_frameworks!/use_frameworks! :linkage => :static/' Podfile
+
+          # Disable module compilation for OpenCV2: its stitching headers contain
+          # enum { NO, ... } which conflicts with Objective-C's NO macro, causing
+          # "expected identifier" errors when Xcode builds the OpenCV2 module.
+          # Insert inside the existing post_install block, after Flutter's own setup call.
+          perl -i -0pe \
+            "s|(flutter_additional_ios_build_settings\\(target\\))|\$1\n    if target.name == 'OpenCV2'\n      target.build_configurations.each { |c| c.build_settings['CLANG_ENABLE_MODULES'] = 'NO' }\n    end|g" \
+            Podfile
+
           echo "=== Patched Podfile ==="
-          grep -n "use_frameworks" Podfile || echo "(use_frameworks line not found)"
+          cat Podfile
 
       - name: Pod install
         working-directory: fingerprint-sdk/example/ios
