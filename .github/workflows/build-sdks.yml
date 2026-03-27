@@ -69,6 +69,11 @@ jobs:
           sed -i "s/android {/android {\n    namespace 'org.opencv'/" \
             /tmp/OpenCV-android-sdk/sdk/build.gradle
 
+          # Fix JVM target mismatch: javac targets 1.8, kotlinc must match
+          # Insert kotlinOptions before the existing compileOptions block
+          sed -i "s/compileOptions {/kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {/" \
+            /tmp/OpenCV-android-sdk/sdk/build.gradle
+
           gradle :sdk:assembleRelease --no-daemon -q
 
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
