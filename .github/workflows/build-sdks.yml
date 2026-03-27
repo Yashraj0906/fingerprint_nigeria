@@ -42,7 +42,7 @@ jobs:
           flutter pub get
           yes "" | flutter create --platforms android . || true
 
-      - name: Download OpenCV Android SDK and build AAR
+      - name: Download OpenCV Android SDK, build AAR, and publish to local Maven repo
         run: |
           cd /tmp
           wget -q -O opencv.zip \
@@ -85,16 +85,29 @@ jobs:
           SDK_GRADLE=/tmp/OpenCV-android-sdk/sdk/build.gradle
           sed -i "0,/android {/s/android {/android {\n    namespace 'org.opencv'\n    buildFeatures { aidl true; buildConfig true }/" "$SDK_GRADLE"
           sed -i "0,/compileOptions {/s/compileOptions {/kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {/" "$SDK_GRADLE"
-          echo "=== Patched sdk/build.gradle ==="
-          cat "$SDK_GRADLE"
 
           gradle :sdk:assembleRelease --no-daemon -q
 
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
           echo "Found AAR: $AAR"
-          mkdir -p "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs"
-          cp "$AAR" "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs/opencv.aar"
-          echo "Done — OpenCV AAR placed in libs/"
+
+          # AGP forbids local .aar file dependencies in library projects.
+          # Publish OpenCV to a local Maven repo so fingerprint_sdk can reference
+          # it with proper Maven coordinates (org.opencv:opencv:4.8.0).
+          REPO="$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs-repo"
+          mkdir -p "$REPO/org/opencv/opencv/4.8.0"
+          cp "$AAR" "$REPO/org/opencv/opencv/4.8.0/opencv-4.8.0.aar"
+          cat > "$REPO/org/opencv/opencv/4.8.0/opencv-4.8.0.pom" << 'POM'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project>
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>org.opencv</groupId>
+            <artifactId>opencv</artifactId>
+            <version>4.8.0</version>
+            <packaging>aar</packaging>
+          </project>
+          POM
+          echo "OpenCV published to local Maven repo at $REPO"
 
       - name: Build fingerprint_sdk release AAR (via example app Gradle)
         working-directory: fingerprint-sdk/example/android
@@ -174,7 +187,8 @@ jobs:
             -scheme fingerprint_sdk \
             -destination "generic/platform=iOS" \
             -archivePath "$PWD/build/ios-device.xcarchive" \
-            SKIP_INSTALL=NO
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
 
       - name: Archive plugin framework for iOS Simulator
         working-directory: fingerprint-sdk/example/ios
@@ -185,7 +199,8 @@ jobs:
             -scheme fingerprint_sdk \
             -destination "generic/platform=iOS Simulator" \
             -archivePath "$PWD/build/ios-simulator.xcarchive" \
-            SKIP_INSTALL=NO
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
 
       - name: Locate frameworks and create XCFramework
         working-directory: fingerprint-sdk/example/ios
