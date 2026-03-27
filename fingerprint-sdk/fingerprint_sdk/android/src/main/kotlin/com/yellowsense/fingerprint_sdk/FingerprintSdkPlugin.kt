@@ -80,7 +80,8 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         val args = call.arguments as? Map<*, *>
         debugMode = args?.get("debugMode") as? Boolean ?: false
 
-        if (!OpenCVLoader.initLocal()) {
+        @Suppress("DEPRECATION")
+        if (!OpenCVLoader.initDebug()) {
             Log.e(TAG, "OpenCV init failed — ensure opencv-android-4.8.x.aar is in android/libs/")
             return result.error("DEVICE_UNSUPPORTED", "OpenCV init failed", null)
         }

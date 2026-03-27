@@ -143,20 +143,20 @@ jobs:
           # OpenCV2 ships as a static framework; Flutter's use_frameworks! requires dynamic.
           sed -i '' 's/use_frameworks!/use_frameworks! :linkage => :static/' Podfile
 
-          # CocoaPods calls ALL post_install blocks, so appending a second one is safe.
+          # CocoaPods rejects multiple post_install blocks, so insert into the existing one.
           # Disable CLANG_ENABLE_MODULES for OpenCV2: its stitching headers define
-          # enum { NO, ... } which conflicts with Objective-C's NO macro (#define NO 0),
-          # causing "expected identifier" errors during Xcode module compilation.
-          cat >> Podfile << 'PODHOOK'
-          post_install do |installer|
-            installer.pods_project.targets.each do |target|
-              next unless target.name == 'OpenCV2'
-              target.build_configurations.each do |config|
-                config.build_settings['CLANG_ENABLE_MODULES'] = 'NO'
-              end
-            end
-          end
-          PODHOOK
+          # enum { NO, ... } which conflicts with the ObjC NO macro (#define NO 0),
+          # causing "expected identifier" errors when Xcode compiles the OpenCV2 module.
+          awk '
+          /flutter_additional_ios_build_settings[(]target[)]/ {
+            print
+            print "    if target.name == \"OpenCV2\""
+            print "      target.build_configurations.each { |c| c.build_settings[\"CLANG_ENABLE_MODULES\"] = \"NO\" }"
+            print "    end"
+            next
+          }
+          { print }
+          ' Podfile > Podfile.tmp && mv Podfile.tmp Podfile
 
           echo "=== Patched Podfile ==="
           cat Podfile

@@ -339,7 +339,7 @@ class CaptureEngine(
             }
 
         } catch (e: Exception) {
-            if (!frame.isClosed) frame.close()
+            runCatching { frame.close() }
             Log.e(TAG, "Frame error: ${e.message}", e)
             withContext(Dispatchers.Main) {
                 onError("PROCESSING_ERROR", e.message ?: "Frame processing failed")
