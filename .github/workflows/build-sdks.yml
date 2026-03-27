@@ -65,6 +65,10 @@ jobs:
           }
           ROOTBUILD
 
+          # AGP 8.x requires 'namespace' — inject it into OpenCV's android{} block
+          sed -i "s/android {/android {\n    namespace 'org.opencv'/" \
+            /tmp/OpenCV-android-sdk/sdk/build.gradle
+
           gradle :sdk:assembleRelease --no-daemon -q
 
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
@@ -111,6 +115,15 @@ jobs:
       - name: Regenerate iOS native project (creates Podfile + xcodeproj)
         working-directory: fingerprint-sdk/example
         run: yes "" | flutter create --platforms ios . || true
+
+      - name: Patch Podfile for OpenCV2 static framework compatibility
+        working-directory: fingerprint-sdk/example/ios
+        run: |
+          # OpenCV2 ships as a static framework; Flutter's use_frameworks! requires dynamic.
+          # Changing to :linkage => :static makes both compatible.
+          sed -i '' 's/use_frameworks!/use_frameworks! :linkage => :static/' Podfile
+          echo "=== Patched Podfile ==="
+          grep -n "use_frameworks" Podfile || echo "(use_frameworks line not found)"
 
       - name: Pod install
         working-directory: fingerprint-sdk/example/ios
