@@ -2,5 +2,5 @@ platform :ios, '13.0'
 use_frameworks!
 
 target 'FingerprintSDK' do
-  pod 'OpenCV2', '~> 4.8.0'
+  pod 'OpenCV2', '~> 4.8'
 end
