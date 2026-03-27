@@ -89,7 +89,7 @@ def process_multi_capture(request: MultiCaptureRequest):
         )
 
     # Liveness is per-hand (one check for all 4 fingers)
-    liveness = liveness_detector.evaluate(gray, hand)
+    liveness = liveness_detector.evaluate(gray, hand, bgr)
 
     results: List[FingerResult] = []
 
@@ -222,7 +222,7 @@ def analyze_frame(request: AnalyzeRequest):
         return AnalyzeResponse(hand_detected=False, hand=request.hand,
                                guidance=hand.guidance or "No hand detected", fingers=[])
 
-    liveness = liveness_detector.evaluate(gray, hand)
+    liveness = liveness_detector.evaluate(gray, hand, bgr)
     fingers_out = []
 
     for finger_key in _FINGER_KEYS:
@@ -320,7 +320,7 @@ def _process_single(finger_id: str, image_base64: str) -> FingerResult:
             guidance_message=q.guidance_message
         )
 
-    liveness = liveness_detector.evaluate(gray, hand)
+    liveness = liveness_detector.evaluate(gray, hand, bgr)
 
     if not liveness.passed:
         return FingerResult(
