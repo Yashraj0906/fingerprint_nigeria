@@ -54,12 +54,13 @@ jobs:
           project(':sdk').projectDir = new File('/tmp/OpenCV-android-sdk/sdk')
           SETTINGS
 
-          # Root build.gradle
+          # Root build.gradle — declare AGP + Kotlin (OpenCV 4.8 uses both)
           cat > build.gradle << 'ROOTBUILD'
           buildscript {
             repositories { google(); mavenCentral() }
             dependencies {
               classpath 'com.android.tools.build:gradle:8.1.4'
+              classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
             }
           }
           ROOTBUILD
