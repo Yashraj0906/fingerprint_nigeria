@@ -21,7 +21,6 @@ targets:
       base:
         SWIFT_VERSION: "5.9"
         DEFINES_MODULE: YES
-        BUILD_LIBRARY_FOR_DISTRIBUTION: YES
         SWIFT_OBJC_BRIDGING_HEADER: Classes/Bridging/FingerprintSDK-Bridging-Header.h
         PRODUCT_BUNDLE_IDENTIFIER: com.yellowsense.FingerprintSDK
         CLANG_ENABLE_MODULES: YES

@@ -28,21 +28,34 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      - name: Download OpenCV Android SDK and extract AAR
+      - name: Download OpenCV Android SDK and build AAR
         run: |
           cd /tmp
-          wget -q -O opencv-android.zip \
+          wget -q -O opencv.zip \
             "https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip"
-          unzip -q opencv-android.zip
-          # Build the OpenCV library AAR
-          cd OpenCV-android-sdk/sdk
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon -q
-          # Copy into our libs/ folder
-          mkdir -p $GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs
-          cp build/outputs/aar/opencv-release.aar \
-            $GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs/opencv.aar
-          echo "OpenCV AAR placed in libs/"
+          unzip -q opencv.zip
+
+          echo "=== Top-level contents ==="
+          ls OpenCV-android-sdk/
+
+          # The Android library project root is OpenCV-android-sdk/sdk
+          # It does not ship a gradlew wrapper; use the system Gradle instead
+          SDK_DIR="/tmp/OpenCV-android-sdk/sdk"
+          cd "$SDK_DIR"
+
+          echo "=== SDK contents ==="
+          ls .
+
+          # Create a minimal settings.gradle if absent
+          [ -f settings.gradle ] || echo 'rootProject.name = "opencv"' > settings.gradle
+
+          gradle assembleRelease --no-daemon -q
+
+          AAR=$(find . -name "*.aar" | head -1)
+          echo "Found AAR: $AAR"
+          mkdir -p "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs"
+          cp "$AAR" "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs/opencv.aar"
+          echo "Done — OpenCV AAR placed in libs/"
 
       - name: Build release AAR
         working-directory: fingerprint-sdk/fingerprint_sdk/android
@@ -87,8 +100,7 @@ jobs:
             -scheme FingerprintSDK \
             -destination "generic/platform=iOS" \
             -archivePath "$PWD/build/ios-device.xcarchive" \
-            SKIP_INSTALL=NO \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+            SKIP_INSTALL=NO
 
       - name: Archive for iOS Simulator (arm64 + x86_64)
         working-directory: fingerprint-sdk/fingerprint_sdk/ios
@@ -99,21 +111,20 @@ jobs:
             -scheme FingerprintSDK \
             -destination "generic/platform=iOS Simulator" \
             -archivePath "$PWD/build/ios-simulator.xcarchive" \
-            SKIP_INSTALL=NO \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+            SKIP_INSTALL=NO
 
       - name: Create XCFramework
         working-directory: fingerprint-sdk/fingerprint_sdk/ios
         run: |
-          echo "=== Device archive contents ==="
+          echo "=== Device archive frameworks ==="
           find "$PWD/build/ios-device.xcarchive" -name "*.framework" | head -20
-          echo "=== Simulator archive contents ==="
+          echo "=== Simulator archive frameworks ==="
           find "$PWD/build/ios-simulator.xcarchive" -name "*.framework" | head -20
 
-          DEVICE_FW=$(find "$PWD/build/ios-device.xcarchive" -name "FingerprintSDK.framework" \
-            -not -path "*/dSYMs/*" | head -1)
-          SIM_FW=$(find "$PWD/build/ios-simulator.xcarchive" -name "FingerprintSDK.framework" \
-            -not -path "*/dSYMs/*" | head -1)
+          DEVICE_FW=$(find "$PWD/build/ios-device.xcarchive" \
+            -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
+          SIM_FW=$(find "$PWD/build/ios-simulator.xcarchive" \
+            -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
 
           echo "Device framework: $DEVICE_FW"
           echo "Simulator framework: $SIM_FW"
