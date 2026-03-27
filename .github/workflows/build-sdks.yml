@@ -42,7 +42,7 @@ jobs:
           flutter pub get
           yes "" | flutter create --platforms android . || true
 
-      - name: Download OpenCV Android SDK, build AAR, and publish to local Maven repo
+      - name: Download OpenCV Android SDK, build AAR, and publish to Maven Local
         run: |
           cd /tmp
           wget -q -O opencv.zip \
@@ -91,13 +91,12 @@ jobs:
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
           echo "Found AAR: $AAR"
 
-          # AGP forbids local .aar file dependencies in library projects.
-          # Publish OpenCV to a local Maven repo so fingerprint_sdk can reference
-          # it with proper Maven coordinates (org.opencv:opencv:4.8.0).
-          REPO="$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs-repo"
-          mkdir -p "$REPO/org/opencv/opencv/4.8.0"
-          cp "$AAR" "$REPO/org/opencv/opencv/4.8.0/opencv-4.8.0.aar"
-          cat > "$REPO/org/opencv/opencv/4.8.0/opencv-4.8.0.pom" << 'POM'
+          # AGP forbids local .aar dependencies in library projects. Publish to
+          # Maven Local so fingerprint_sdk can resolve org.opencv:opencv:4.8.0.
+          MVNLOC="$HOME/.m2/repository/org/opencv/opencv/4.8.0"
+          mkdir -p "$MVNLOC"
+          cp "$AAR" "$MVNLOC/opencv-4.8.0.aar"
+          cat > "$MVNLOC/opencv-4.8.0.pom" << 'MAVENPOM'
           <?xml version="1.0" encoding="UTF-8"?>
           <project>
             <modelVersion>4.0.0</modelVersion>
@@ -106,8 +105,18 @@ jobs:
             <version>4.8.0</version>
             <packaging>aar</packaging>
           </project>
-          POM
-          echo "OpenCV published to local Maven repo at $REPO"
+          MAVENPOM
+
+          # Gradle init script: add mavenLocal() to ALL project repositories so
+          # the fingerprint_sdk subproject (built via example app) finds OpenCV.
+          mkdir -p "$HOME/.gradle"
+          cat > "$HOME/.gradle/init.gradle" << 'INITSCRIPT'
+          allprojects {
+            repositories { mavenLocal() }
+          }
+          INITSCRIPT
+
+          echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
       - name: Build fingerprint_sdk release AAR (via example app Gradle)
         working-directory: fingerprint-sdk/example/android

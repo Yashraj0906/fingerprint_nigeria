@@ -14,6 +14,13 @@ class CaptureRequest(BaseModel):
     fingers:        List[FingerImage]
 
 
+class BboxPct(BaseModel):
+    x: float   # left edge as fraction of image width  (0-1)
+    y: float   # top  edge as fraction of image height (0-1)
+    w: float   # width  as fraction of image width
+    h: float   # height as fraction of image height
+
+
 class FingerResult(BaseModel):
     finger_id:           str
     status:              str              # success | failed
@@ -28,6 +35,33 @@ class FingerResult(BaseModel):
     error_code:          Optional[str]
     error_message:       Optional[str]
     guidance_message:    Optional[str]    # human-readable fix hint for live UI
+    bbox_pct:            Optional[BboxPct] = None  # finger crop location in image
+
+
+# ── Fast analyze (no template encoding) ──────────────────────────────────────
+
+class AnalyzeRequest(BaseModel):
+    image_base64: str
+    hand:         str   # "RIGHT" | "LEFT"
+
+
+class AnalyzeFingerResult(BaseModel):
+    finger_id:    str
+    detected:     bool
+    quality_score: float
+    blur_score:   Optional[float]
+    illum_score:  Optional[float]   # contrast_score
+    liveness:     bool
+    liveness_conf: Optional[float]
+    guidance:     Optional[str]
+    bbox_pct:     Optional[BboxPct]
+
+
+class AnalyzeResponse(BaseModel):
+    hand_detected: bool
+    hand:          str
+    guidance:      Optional[str]
+    fingers:       List[AnalyzeFingerResult]
 
 
 class CaptureResponse(BaseModel):

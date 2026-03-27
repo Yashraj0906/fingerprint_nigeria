@@ -4,6 +4,7 @@ from app.models.schemas import (
     CaptureRequest, CaptureResponse,
     MultiCaptureRequest, MultiCaptureResponse,
     FingerResult,
+    AnalyzeRequest, AnalyzeResponse, AnalyzeFingerResult, BboxPct,
 )
 from app.services import image_processor, quality_analyzer, liveness_detector, template_encoder
 from app.services import hand_detector
@@ -192,6 +193,83 @@ def process_multi_capture(request: MultiCaptureRequest):
         transaction_id=request.transaction_id,
         overall_status=overall, hand=request.hand,
         guidance=guidance, results=results
+    )
+
+
+# ── Fast analyze endpoint (no template — just detection + quality + bboxes) ───
+
+@router.post("/capture/analyze", response_model=AnalyzeResponse)
+def analyze_frame(request: AnalyzeRequest):
+    """
+    Lightweight real-time analysis endpoint for the live UI.
+    Runs MediaPipe hand detection + quality scoring on each frame.
+    Returns per-finger quality scores and bounding boxes (as % of image size).
+    Does NOT encode templates — fast enough for 5-10 fps polling.
+    """
+    hand_prefix = request.hand.upper()
+
+    try:
+        bgr = image_processor.base64_to_mat(request.image_base64)
+    except Exception as e:
+        return AnalyzeResponse(hand_detected=False, hand=request.hand,
+                               guidance="Image decode failed", fingers=[])
+
+    h_img, w_img = bgr.shape[:2]
+    gray = image_processor.to_gray(bgr)
+    hand = hand_detector.detect_all_fingers(bgr)
+
+    if not hand.detected:
+        return AnalyzeResponse(hand_detected=False, hand=request.hand,
+                               guidance=hand.guidance or "No hand detected", fingers=[])
+
+    liveness = liveness_detector.evaluate(gray, hand)
+    fingers_out = []
+
+    for finger_key in _FINGER_KEYS:
+        finger_id = f"{hand_prefix}_{finger_key}"
+        fc = hand.fingers.get(finger_key)
+
+        if fc is None or not fc.detected or fc.crop is None:
+            fingers_out.append(AnalyzeFingerResult(
+                finger_id=finger_id, detected=False,
+                quality_score=0.0, blur_score=None, illum_score=None,
+                liveness=False, liveness_conf=None,
+                guidance="Finger not visible", bbox_pct=None
+            ))
+            continue
+
+        roi_gray = image_processor.to_gray(fc.crop)
+        q = quality_analyzer.analyze(roi_gray)
+
+        bbox_pct = None
+        if fc.bbox:
+            x, y, w, h = fc.bbox
+            bbox_pct = BboxPct(
+                x=round(x / w_img, 4), y=round(y / h_img, 4),
+                w=round(w / w_img, 4), h=round(h / h_img, 4)
+            )
+
+        fingers_out.append(AnalyzeFingerResult(
+            finger_id=finger_id, detected=True,
+            quality_score=round(q.score, 2),
+            blur_score=round(q.blur_score, 2),
+            illum_score=round(q.contrast_score, 2),
+            liveness=liveness.passed,
+            liveness_conf=round(liveness.confidence, 3),
+            guidance=q.guidance_message,
+            bbox_pct=bbox_pct
+        ))
+
+    overall_guidance = hand.guidance
+    if not overall_guidance:
+        for f in fingers_out:
+            if f.guidance:
+                overall_guidance = f.guidance
+                break
+
+    return AnalyzeResponse(
+        hand_detected=True, hand=request.hand,
+        guidance=overall_guidance, fingers=fingers_out
     )
 
 

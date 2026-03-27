@@ -12,10 +12,10 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositories {
-        // Local Maven repo created by CI to provide the OpenCV AAR as a Maven artifact.
-        // AGP does not allow local .aar file dependencies in library projects; this
-        // workaround publishes opencv.aar to a minimal Maven repo structure.
-        maven { url "$rootDir/libs-repo" }
+        // OpenCV is provided via Maven Local (published by CI).
+        // Run `mvn install:install-file -Dfile=opencv.aar -DgroupId=org.opencv
+        //   -DartifactId=opencv -Dversion=4.8.0 -Dpackaging=aar` for local builds.
+        mavenLocal()
         google()
         mavenCentral()
     }
