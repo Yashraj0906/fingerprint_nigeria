@@ -23,10 +23,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
+      # Gradle 7.4 is required to build the OpenCV 4.8.0 Android SDK
+      - name: Setup Gradle 7.4 for OpenCV build
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.4'
+          gradle-version: '7.4'
 
       - name: Download OpenCV Android SDK and build AAR
         run: |
@@ -35,18 +36,12 @@ jobs:
             "https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip"
           unzip -q opencv.zip
 
-          echo "=== Top-level contents ==="
-          ls OpenCV-android-sdk/
-
-          # The Android library project root is OpenCV-android-sdk/sdk
-          # It does not ship a gradlew wrapper; use the system Gradle instead
           SDK_DIR="/tmp/OpenCV-android-sdk/sdk"
           cd "$SDK_DIR"
-
-          echo "=== SDK contents ==="
+          echo "=== SDK root contents ==="
           ls .
 
-          # Create a minimal settings.gradle if absent
+          # Create settings.gradle if missing (needed for standalone Gradle build)
           [ -f settings.gradle ] || echo 'rootProject.name = "opencv"' > settings.gradle
 
           gradle assembleRelease --no-daemon -q
@@ -55,9 +50,15 @@ jobs:
           echo "Found AAR: $AAR"
           mkdir -p "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs"
           cp "$AAR" "$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs/opencv.aar"
-          echo "Done — OpenCV AAR placed in libs/"
+          echo "OpenCV AAR placed in libs/"
 
-      - name: Build release AAR
+      # Use Gradle 8.4 for our SDK build
+      - name: Setup Gradle 8.4 for SDK build
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4'
+
+      - name: Build fingerprint_sdk release AAR
         working-directory: fingerprint-sdk/fingerprint_sdk/android
         run: gradle assembleRelease --no-daemon
 
@@ -71,6 +72,7 @@ jobs:
   # ─────────────────────────────────────────────
   # iOS — produces FingerprintSDK.xcframework
   # (device arm64 + simulator arm64/x86_64)
+  # Flutter must be installed because the plugin imports Flutter
   # ─────────────────────────────────────────────
   build-ios-xcframework:
     name: Build iOS XCFramework
@@ -80,41 +82,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
 
-      - name: Generate Xcode project
-        working-directory: fingerprint-sdk/fingerprint_sdk/ios
-        run: xcodegen generate
+      - name: Flutter precache iOS artifacts
+        run: flutter precache --ios
 
-      - name: Install CocoaPods dependencies
-        working-directory: fingerprint-sdk/fingerprint_sdk/ios
+      - name: Get example app dependencies
+        working-directory: fingerprint-sdk/example
+        run: flutter pub get
+
+      - name: Pod install (resolves Flutter + OpenCV + plugin)
+        working-directory: fingerprint-sdk/example/ios
         run: pod install --repo-update
 
-      - name: Archive for iOS device (arm64)
-        working-directory: fingerprint-sdk/fingerprint_sdk/ios
+      - name: Archive plugin framework for iOS device (arm64)
+        working-directory: fingerprint-sdk/example/ios
         run: |
           set -eo pipefail
           xcodebuild archive \
-            -workspace FingerprintSDK.xcworkspace \
-            -scheme FingerprintSDK \
+            -workspace Runner.xcworkspace \
+            -scheme fingerprint_sdk \
             -destination "generic/platform=iOS" \
             -archivePath "$PWD/build/ios-device.xcarchive" \
             SKIP_INSTALL=NO
 
-      - name: Archive for iOS Simulator (arm64 + x86_64)
-        working-directory: fingerprint-sdk/fingerprint_sdk/ios
+      - name: Archive plugin framework for iOS Simulator
+        working-directory: fingerprint-sdk/example/ios
         run: |
           set -eo pipefail
           xcodebuild archive \
-            -workspace FingerprintSDK.xcworkspace \
-            -scheme FingerprintSDK \
+            -workspace Runner.xcworkspace \
+            -scheme fingerprint_sdk \
             -destination "generic/platform=iOS Simulator" \
             -archivePath "$PWD/build/ios-simulator.xcarchive" \
             SKIP_INSTALL=NO
 
-      - name: Create XCFramework
-        working-directory: fingerprint-sdk/fingerprint_sdk/ios
+      - name: Locate frameworks and create XCFramework
+        working-directory: fingerprint-sdk/example/ios
         run: |
           echo "=== Device archive frameworks ==="
           find "$PWD/build/ios-device.xcarchive" -name "*.framework" | head -20
@@ -122,9 +129,9 @@ jobs:
           find "$PWD/build/ios-simulator.xcarchive" -name "*.framework" | head -20
 
           DEVICE_FW=$(find "$PWD/build/ios-device.xcarchive" \
-            -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
+            -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
           SIM_FW=$(find "$PWD/build/ios-simulator.xcarchive" \
-            -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
+            -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
 
           echo "Device framework: $DEVICE_FW"
           echo "Simulator framework: $SIM_FW"
@@ -132,15 +139,15 @@ jobs:
           xcodebuild -create-xcframework \
             -framework "$DEVICE_FW" \
             -framework "$SIM_FW" \
-            -output "$PWD/build/FingerprintSDK.xcframework"
+            -output "$PWD/build/fingerprint_sdk.xcframework"
 
       - name: Zip XCFramework
-        working-directory: fingerprint-sdk/fingerprint_sdk/ios/build
-        run: zip -r FingerprintSDK.xcframework.zip FingerprintSDK.xcframework
+        working-directory: fingerprint-sdk/example/ios/build
+        run: zip -r fingerprint_sdk.xcframework.zip fingerprint_sdk.xcframework
 
       - name: Upload XCFramework artifact
         uses: actions/upload-artifact@v4
         with:
           name: fingerprint-sdk-ios-xcframework
-          path: fingerprint-sdk/fingerprint_sdk/ios/build/FingerprintSDK.xcframework.zip
+          path: fingerprint-sdk/example/ios/build/fingerprint_sdk.xcframework.zip
           retention-days: 30
