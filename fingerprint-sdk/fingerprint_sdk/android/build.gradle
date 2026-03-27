@@ -19,19 +19,20 @@ android {
 
     kotlinOptions { jvmTarget = '17' }
 
-    // Allow importing local AAR files from android/libs/
-    repositories {
-        flatDir { dirs 'libs' }
+    packagingOptions {
+        pickFirst 'lib/*/libopencv_java4.so'
     }
 
-    packagingOptions {
-        // Avoid duplicate .so conflicts when merging OpenCV native libs
-        pickFirst 'lib/*/libopencv_java4.so'
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
     }
 }
 
 repositories {
-    flatDir { dirs 'libs' }
+    google()
+    mavenCentral()
 }
 
 dependencies {
@@ -42,7 +43,6 @@ dependencies {
     implementation 'androidx.camera:camera-view:1.3.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
-    // OpenCV 4.8.x AAR — place opencv-android-4.8.x.aar inside android/libs/
-    // Download from: https://github.com/opencv/opencv/releases/tag/4.8.0
-    implementation(name: 'opencv-android-4.8.x', ext: 'aar')
+    // OpenCV from Maven Central — no local AAR file needed
+    implementation 'org.opencv:opencv:4.8.0'
 }
