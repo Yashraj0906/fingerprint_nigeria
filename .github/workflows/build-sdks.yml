@@ -89,9 +89,27 @@ jobs:
       - name: Create XCFramework
         working-directory: fingerprint-sdk/fingerprint_sdk/ios
         run: |
+          echo "=== Device archive frameworks ==="
+          find build/ios-device.xcarchive -name "*.framework" | head -20
+          echo "=== Simulator archive frameworks ==="
+          find build/ios-simulator.xcarchive -name "*.framework" | head -20
+
+          DEVICE_FW=$(find build/ios-device.xcarchive/Products -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
+          SIM_FW=$(find build/ios-simulator.xcarchive/Products -name "FingerprintSDK.framework" -not -path "*/dSYMs/*" | head -1)
+
+          if [ -z "$DEVICE_FW" ]; then
+            DEVICE_FW=$(find build/ios-device.xcarchive -name "*.framework" -not -path "*/dSYMs/*" | head -1)
+          fi
+          if [ -z "$SIM_FW" ]; then
+            SIM_FW=$(find build/ios-simulator.xcarchive -name "*.framework" -not -path "*/dSYMs/*" | head -1)
+          fi
+
+          echo "Using device framework: $DEVICE_FW"
+          echo "Using simulator framework: $SIM_FW"
+
           xcodebuild -create-xcframework \
-            -framework build/ios-device.xcarchive/Products/Library/Frameworks/FingerprintSDK.framework \
-            -framework build/ios-simulator.xcarchive/Products/Library/Frameworks/FingerprintSDK.framework \
+            -framework "$DEVICE_FW" \
+            -framework "$SIM_FW" \
             -output build/FingerprintSDK.xcframework
 
       - name: Zip XCFramework
