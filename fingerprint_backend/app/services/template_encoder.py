@@ -5,13 +5,18 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-_ENDING       = 1
-_BIFURCATION  = 2
-_BORDER       = 15
-_CLUSTER_R    = 12.0
-_MAX_MINUTIAE = 80
-_MIN_MINUTIAE = 10
-_HEADER_SIZE  = 30   # bytes before minutiae array
+_ENDING          = 1
+_BIFURCATION     = 2
+_BORDER          = 15
+_CLUSTER_R       = 12.0
+_MAX_MINUTIAE    = 80
+_MIN_MINUTIAE    = 10
+_HEADER_SIZE     = 30    # bytes before minutiae array
+_MIN_RIDGE_PX    = 12    # min skeleton pixels in neighbourhood — filters noise spikes
+_FOLLOW_STEPS    = 7     # pixels to follow per branch for angle estimation
+_GRID_ROWS       = 4     # spatial distribution grid
+_GRID_COLS       = 4
+_MAX_PER_CELL    = 5     # max minutiae per grid cell
 
 
 @dataclass
@@ -108,6 +113,10 @@ def _extract(skeleton: np.ndarray) -> List[Minutia]:
             else:
                 continue
 
+            # Reject minutiae on very short ridge stubs (noise artifacts)
+            if not _has_sufficient_ridge(skeleton, r, c, rows, cols):
+                continue
+
             angle   = _ridge_angle(skeleton, r, c, rows, cols)
             quality = _local_quality(skeleton, r, c, rows, cols)
             minutiae.append(Minutia(c, r, angle, mtype, quality))
@@ -115,52 +124,150 @@ def _extract(skeleton: np.ndarray) -> List[Minutia]:
     return minutiae
 
 
-def _ridge_angle(data: np.ndarray, r: int, c: int, rows: int, cols: int) -> int:
-    def px(dr: int, dc: int) -> float:
-        nr = max(0, min(rows - 1, r + dr))
-        nc = max(0, min(cols - 1, c + dc))
-        return float(data[nr, nc])
+def _follow_ridge(skeleton: np.ndarray, start_r: int, start_c: int,
+                  from_r: int, from_c: int, rows: int, cols: int) -> tuple:
+    """
+    Walk the skeleton ridge from (start_r, start_c) away from (from_r, from_c)
+    for up to _FOLLOW_STEPS pixels.  Returns the endpoint (end_r, end_c).
 
-    gx = (
-        -px(-2,-2) - 2*px(-1,-2) - px(0,-2) + px(0,2) + 2*px(1,2) + px(2,2)
-        + -px(-2,-1) - 2*px(-1,-1) + px(0,1) + 2*px(1,1) + px(2,1)
-    )
-    gy = (
-        -px(-2,-2) - 2*px(-2,-1) - px(-2,0) + px(2,0) + 2*px(2,1) + px(2,2)
-        + -px(-1,-2) - 2*px(-1,-1) + px(1,0) + 2*px(1,1) + px(1,2)
-    )
-    angle_deg = float(np.degrees(np.arctan2(gy, gx)))
+    Used by _ridge_angle to get a stable direction vector instead of a noisy
+    single-pixel gradient.
+    """
+    def px(rr: int, cc: int) -> bool:
+        return 0 <= rr < rows and 0 <= cc < cols and skeleton[rr, cc] > 127
+
+    prev_r, prev_c = from_r, from_c
+    cur_r,  cur_c  = start_r, start_c
+
+    for _ in range(_FOLLOW_STEPS):
+        moved = False
+        # 4-connected first (prefer straight path), then diagonal
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]:
+            nr, nc = cur_r + dr, cur_c + dc
+            if (nr, nc) != (prev_r, prev_c) and px(nr, nc):
+                prev_r, prev_c = cur_r, cur_c
+                cur_r, cur_c   = nr, nc
+                moved = True
+                break
+        if not moved:
+            break
+
+    return cur_r, cur_c
+
+
+def _ridge_angle(skeleton: np.ndarray, r: int, c: int, rows: int, cols: int) -> int:
+    """
+    Estimate minutia angle by following each ridge branch for _FOLLOW_STEPS pixels
+    and averaging the resulting direction vectors.
+
+    WHY THIS IS BETTER than a single-point gradient:
+    A single gradient pixel is highly sensitive to skeleton noise — one stray
+    pixel can flip the angle by 90°+.  Following the ridge several steps smooths
+    out local perturbations and gives a direction that reflects the true ridge
+    trajectory, which is what ISO 19794-2 angle represents.
+    """
+    def px(rr: int, cc: int) -> bool:
+        return 0 <= rr < rows and 0 <= cc < cols and skeleton[rr, cc] > 127
+
+    neighbors = [
+        (r + dr, c + dc)
+        for dr in (-1, 0, 1) for dc in (-1, 0, 1)
+        if not (dr == 0 and dc == 0) and px(r + dr, c + dc)
+    ]
+
+    if not neighbors:
+        return 0
+
+    dx_sum, dy_sum = 0.0, 0.0
+    for nr, nc in neighbors:
+        end_r, end_c = _follow_ridge(skeleton, nr, nc, r, c, rows, cols)
+        dx_sum += end_c - c
+        dy_sum += end_r - r
+
+    angle_deg = float(np.degrees(np.arctan2(dy_sum, dx_sum)))
     return int(((angle_deg + 360.0) % 360.0) / 360.0 * 255.0)
 
 
-def _local_quality(data: np.ndarray, r: int, c: int, rows: int, cols: int) -> int:
-    def px(dr: int, dc: int) -> float:
-        nr = max(0, min(rows - 1, r + dr))
-        nc = max(0, min(cols - 1, c + dc))
-        return float(data[nr, nc])
+def _local_quality(skeleton: np.ndarray, r: int, c: int, rows: int, cols: int) -> int:
+    """
+    Local ridge quality score (0-100).
 
-    lap = px(-1,0) + px(1,0) + px(0,-1) + px(0,1) - 4 * px(0,0)
-    return int(np.clip(abs(lap) / 4.0 * 100.0, 0, 100))
+    Measures skeleton pixel density in a 24×24 neighbourhood.
+    A minutia on a strong, continuous ridge has high density; one on a short
+    noise stub has few surrounding pixels → low score.
+
+    This replaces the Laplacian magnitude which measured edge sharpness
+    (always high on the skeleton by construction) rather than actual ridge quality.
+    """
+    r1 = max(0, r - 12);  r2 = min(rows, r + 12)
+    c1 = max(0, c - 12);  c2 = min(cols, c + 12)
+    area    = max(1, (r2 - r1) * (c2 - c1))
+    nonzero = int(np.count_nonzero(skeleton[r1:r2, c1:c2] > 127))
+    # Dense ridge area: nonzero/area ≈ 0.4-0.6 for a good skeleton crop
+    return int(np.clip(nonzero / area * 200.0, 0, 100))
+
+
+def _has_sufficient_ridge(skeleton: np.ndarray, r: int, c: int,
+                          rows: int, cols: int) -> bool:
+    """
+    Return True only if there are at least _MIN_RIDGE_PX skeleton pixels in the
+    immediate neighbourhood of (r, c).
+
+    WHY:  The crossing-number algorithm fires on single isolated pixels and
+    tiny noise stubs that survived skeletonization.  These produce false minutiae
+    that degrade matching.  A real ridge ending or bifurcation always sits on a
+    ridge with many surrounding pixels.
+    """
+    r1 = max(0, r - 8);  r2 = min(rows, r + 8)
+    c1 = max(0, c - 8);  c2 = min(cols, c + 8)
+    return int(np.count_nonzero(skeleton[r1:r2, c1:c2] > 127)) >= _MIN_RIDGE_PX
 
 
 # ── Minutiae filtering ────────────────────────────────────────────────────────
 
 def _filter(raw: List[Minutia], width: int, height: int) -> List[Minutia]:
+    """
+    Filter raw minutiae list to a clean, well-distributed set.
+
+    Three passes in priority order (all operating on quality-sorted input):
+      1. Border exclusion  — discard minutiae too close to crop edges
+      2. Proximity cluster — keep only one minutia per _CLUSTER_R radius
+      3. Spatial grid cap  — limit to _MAX_PER_CELL per grid cell so minutiae
+                             are spread across the fingerprint rather than
+                             clumped in one high-texture region
+
+    WHY SPATIAL DISTRIBUTION:
+    If 60 of 80 minutiae fall in the upper-left quarter, the matcher only has
+    meaningful overlap there.  Enforcing a grid cap ensures the template
+    represents the whole fingerprint, which dramatically improves match rate
+    when the user presents the finger at a slightly different position.
+    """
     sorted_m = sorted(raw, key=lambda m: m.quality, reverse=True)
-    accepted: List[Minutia] = []
+    accepted:    List[Minutia] = []
+    cell_counts: dict          = {}
+
+    cell_w = max(1, width  / _GRID_COLS)
+    cell_h = max(1, height / _GRID_ROWS)
 
     for m in sorted_m:
-        if not (_BORDER <= m.x <= width - _BORDER):
+        # 1. Border exclusion
+        if not (_BORDER <= m.x <= width  - _BORDER):
             continue
         if not (_BORDER <= m.y <= height - _BORDER):
             continue
 
-        too_close = any(
-            np.hypot(m.x - e.x, m.y - e.y) < _CLUSTER_R
-            for e in accepted
-        )
-        if not too_close:
-            accepted.append(m)
+        # 2. Proximity cluster
+        if any(np.hypot(m.x - e.x, m.y - e.y) < _CLUSTER_R for e in accepted):
+            continue
+
+        # 3. Spatial grid cap
+        cell = (int(m.y / cell_h), int(m.x / cell_w))
+        if cell_counts.get(cell, 0) >= _MAX_PER_CELL:
+            continue
+
+        cell_counts[cell] = cell_counts.get(cell, 0) + 1
+        accepted.append(m)
+
         if len(accepted) >= _MAX_MINUTIAE:
             break
 
