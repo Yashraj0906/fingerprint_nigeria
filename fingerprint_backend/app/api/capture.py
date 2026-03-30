@@ -108,6 +108,10 @@ def process_multi_capture(request: MultiCaptureRequest):
         roi_bgr  = fc.crop
         roi_gray = image_processor.to_gray(roi_bgr)
 
+        # Enhanced visual crop — always generated so UI can show a clean thumbnail
+        enhanced_crop    = image_processor.enhance_visual(roi_bgr)
+        enhanced_img_b64 = image_processor.mat_to_base64(enhanced_crop, quality=88)
+
         # Quality check
         q = quality_analyzer.analyze(roi_gray)
 
@@ -120,7 +124,8 @@ def process_multi_capture(request: MultiCaptureRequest):
                 ridge_score=round(q.ridge_score, 2),
                 coverage_score=round(q.coverage_score, 2),
                 liveness_passed=False, liveness_confidence=None,
-                template=None, error_code="QUALITY_LOW",
+                template=None, enhanced_image_b64=enhanced_img_b64,
+                error_code="QUALITY_LOW",
                 error_message=f"Quality {q.score:.1f} below threshold",
                 guidance_message=q.guidance_message
             ))
@@ -137,7 +142,8 @@ def process_multi_capture(request: MultiCaptureRequest):
                 coverage_score=round(q.coverage_score, 2),
                 liveness_passed=False,
                 liveness_confidence=round(liveness.confidence, 3),
-                template=None, error_code="LIVENESS_FAILED",
+                template=None, enhanced_image_b64=enhanced_img_b64,
+                error_code="LIVENESS_FAILED",
                 error_message=liveness.reason or "Liveness check failed",
                 guidance_message=None
             ))
@@ -158,7 +164,8 @@ def process_multi_capture(request: MultiCaptureRequest):
                 coverage_score=round(q.coverage_score, 2),
                 liveness_passed=True,
                 liveness_confidence=round(liveness.confidence, 3),
-                template=None, error_code="LOW_RIDGE_DETAIL",
+                template=None, enhanced_image_b64=enhanced_img_b64,
+                error_code="LOW_RIDGE_DETAIL",
                 error_message="Insufficient ridge detail",
                 guidance_message="Flatten finger slightly — ridges unclear"
             ))
@@ -173,7 +180,8 @@ def process_multi_capture(request: MultiCaptureRequest):
             coverage_score=round(q.coverage_score, 2),
             liveness_passed=True,
             liveness_confidence=round(liveness.confidence, 3),
-            template=template, error_code=None, error_message=None,
+            template=template, enhanced_image_b64=enhanced_img_b64,
+            error_code=None, error_message=None,
             guidance_message=None
         ))
 

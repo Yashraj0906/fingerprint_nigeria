@@ -130,13 +130,16 @@ class HandDetector:
         """
         Detect all 4 fingers (index, middle, ring, little) from one hand.
 
-        Returns individual crops for each finger plus real-time guidance.
+        Returns individual crops for each finger plus real-time guided capture
+        instructions derived from full hand geometry analysis.
 
-        Strategy:
-        - Detect the hand once
-        - For each finger extract the 4-landmark bounding box with padding
-        - Check vertical orientation per finger
-        - Derive guidance from overall detection quality
+        Guidance priority chain (highest to lowest):
+          1. Distance  — too far / too close based on wrist-to-fingertip span
+          2. Centering — hand outside safe zone of frame
+          3. Tilt      — hand rolled sideways (index vs little knuckle height)
+          4. Spread    — fingers bunched together
+          5. Extension — specific fingers not raised
+          6. Orientation — fingers not pointing upward
         """
         height, width = frame.shape[:2]
         results = self.hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -147,7 +150,7 @@ class HandDetector:
         if not results.multi_hand_landmarks:
             return HandDetectionResult(
                 detected=False, confidence=0.0, fingers=empty,
-                guidance="Place your hand flat in the frame"
+                guidance="Place your hand flat in front of the camera"
             )
 
         # Hand side from MediaPipe classification
@@ -155,49 +158,44 @@ class HandDetector:
         if results.multi_handedness:
             hand_side = results.multi_handedness[0].classification[0].label
 
-        lm      = results.multi_hand_landmarks[0]
-        fingers: Dict[str, FingerCrop] = {}
-        all_vertical = True
+        lm = results.multi_hand_landmarks[0]
 
-        for name, ids in _FINGER_LANDMARKS.items():
-            # ── Extension check ───────────────────────────────────────────────
-            # A finger is only "detected" when it is actually raised/extended.
-            # MediaPipe returns landmarks for ALL fingers including folded ones,
-            # so we must confirm tip.y < mcp.y (tip above knuckle in image coords).
-            if not self._is_finger_extended(lm, ids):
-                fingers[name] = FingerCrop(detected=False, crop=None, bbox=None)
-                continue
+        # ── Geometry guidance (runs before per-finger checks) ─────────────────
+        geometry_guidance = self._analyze_hand_geometry(lm)
+        if geometry_guidance:
+            # Still extract fingers so caller has bbox data, but guidance takes priority
+            fingers = self._extract_finger_crops(lm, frame, width, height)
+            detected_count = sum(1 for f in fingers.values() if f.detected)
+            index_crop  = fingers.get("INDEX")
+            finger_crop = index_crop.crop if index_crop and index_crop.detected else None
+            return HandDetectionResult(
+                detected=True,
+                confidence=0.55 + 0.1 * detected_count,
+                finger_crop=finger_crop,
+                hand_side=hand_side,
+                fingers=fingers,
+                guidance=geometry_guidance,
+            )
 
-            bbox = self._landmarks_to_bbox(lm, ids, width, height)
-            if bbox is None:
-                fingers[name] = FingerCrop(detected=False, crop=None, bbox=None)
-                continue
-
-            x, y, w, h   = bbox
-            crop          = frame[y:y + h, x:x + w].copy()
-            is_vert       = self._is_landmarks_vertical(lm, ids)
-            if not is_vert:
-                all_vertical = False
-
-            fingers[name] = FingerCrop(detected=True, crop=crop,
-                                       bbox=bbox, is_vertical=is_vert)
+        # ── Per-finger extension + crop ───────────────────────────────────────
+        fingers      = self._extract_finger_crops(lm, frame, width, height)
+        all_vertical = all(f.is_vertical for f in fingers.values() if f.detected)
 
         detected_count = sum(1 for f in fingers.values() if f.detected)
         confidence     = 0.88 if detected_count == 4 else 0.55 + 0.1 * detected_count
 
-        # Guidance priority: missing fingers > orientation
+        # ── Finger-level guidance ─────────────────────────────────────────────
         missing = [n.capitalize() for n, f in fingers.items() if not f.detected]
         if detected_count == 0:
-            guidance = "No fingers detected — raise all 4 fingers toward camera"
+            guidance = "Raise all 4 fingers and point them toward the camera"
         elif missing:
-            guidance = "Raise: " + ", ".join(missing)
+            guidance = "Raise your " + ", ".join(missing) + " finger" + ("s" if len(missing) > 1 else "")
         elif not all_vertical:
-            guidance = "Keep fingers upright and pointing toward camera"
+            guidance = "Point your fingers straight up toward the camera"
         else:
-            guidance = None  # all good
+            guidance = None  # all good — ready to capture
 
-        # Populate finger_crop with index finger crop for backward compat
-        index_crop = fingers.get("INDEX")
+        index_crop  = fingers.get("INDEX")
         finger_crop = index_crop.crop if index_crop and index_crop.detected else None
 
         return HandDetectionResult(
@@ -224,6 +222,80 @@ class HandDetector:
         self.hands.close()
 
     # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _analyze_hand_geometry(self, lm) -> Optional[str]:
+        """
+        Derive actionable placement guidance from hand landmark geometry.
+
+        All coordinates are MediaPipe-normalized (0.0–1.0 of frame dimensions).
+        Returns the single highest-priority guidance string, or None if geometry is good.
+
+        Measurements used:
+          - span       : wrist(0) → middle-tip(12) vertical distance → proxy for distance
+          - palm_x/y   : centroid of palm landmarks [0,5,9,13,17] → centering
+          - tilt       : |index_mcp.y − little_mcp.y| → hand roll (sideways tilt)
+          - spread     : |index_tip.x − little_tip.x| → finger spacing
+        """
+        # ── 1. Distance: wrist-to-middle-fingertip vertical span ─────────────
+        # span < 0.30 → hand too small/far away; span > 0.72 → too large/close
+        wrist = lm.landmark[0]
+        m_tip = lm.landmark[12]
+        span  = abs(m_tip.y - wrist.y)
+        if span < 0.30:
+            return "Move your hand closer to the camera"
+        if span > 0.72:
+            return "Move your hand back from the camera"
+
+        # ── 2. Centering: palm centroid should stay inside the middle 60% ────
+        palm_xs = [lm.landmark[i].x for i in [0, 5, 9, 13, 17]]
+        palm_ys = [lm.landmark[i].y for i in [0, 5, 9, 13, 17]]
+        palm_x  = float(np.mean(palm_xs))
+        palm_y  = float(np.mean(palm_ys))
+        if palm_x < 0.20:
+            return "Move your hand to the right"
+        if palm_x > 0.80:
+            return "Move your hand to the left"
+        if palm_y < 0.12:
+            return "Move your hand down"
+        if palm_y > 0.88:
+            return "Move your hand up"
+
+        # ── 3. Tilt: index and little MCP knuckles should be at similar heights
+        # A large vertical gap means the hand is rolled sideways
+        idx_mcp    = lm.landmark[5]
+        little_mcp = lm.landmark[17]
+        tilt       = abs(idx_mcp.y - little_mcp.y)
+        if tilt > 0.10:
+            return "Keep your hand level — don't tilt it sideways"
+
+        # ── 4. Spread: index-tip to little-tip horizontal gap ─────────────────
+        # spread < 0.12 (normalized) means fingers are bunched together
+        idx_tip    = lm.landmark[8]
+        little_tip = lm.landmark[20]
+        spread     = abs(idx_tip.x - little_tip.x)
+        if spread < 0.12:
+            return "Spread your fingers apart"
+
+        return None  # geometry is good
+
+    def _extract_finger_crops(self, lm, frame: np.ndarray,
+                              width: int, height: int) -> Dict[str, "FingerCrop"]:
+        """Extract per-finger crops and extension state from hand landmarks."""
+        fingers: Dict[str, FingerCrop] = {}
+        for name, ids in _FINGER_LANDMARKS.items():
+            if not self._is_finger_extended(lm, ids):
+                fingers[name] = FingerCrop(detected=False, crop=None, bbox=None)
+                continue
+            bbox = self._landmarks_to_bbox(lm, ids, width, height)
+            if bbox is None:
+                fingers[name] = FingerCrop(detected=False, crop=None, bbox=None)
+                continue
+            x, y, w, h = bbox
+            crop        = frame[y:y + h, x:x + w].copy()
+            is_vert     = self._is_landmarks_vertical(lm, ids)
+            fingers[name] = FingerCrop(detected=True, crop=crop,
+                                       bbox=bbox, is_vertical=is_vert)
+        return fingers
 
     def _landmarks_to_bbox(self, lm, ids: list, width: int, height: int
                            ) -> Optional[Tuple[int, int, int, int]]:

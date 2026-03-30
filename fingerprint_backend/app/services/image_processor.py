@@ -23,25 +23,42 @@ def to_gray(src: np.ndarray) -> np.ndarray:
     return src.copy()
 
 
+def enhance_visual(src: np.ndarray) -> np.ndarray:
+    """
+    Lightweight visual enhancement for UI display.
+    Returns a clean CLAHE-enhanced grayscale image (not skeletonized).
+    Bilateral filter removes webcam compression noise while keeping ridge edges sharp.
+    """
+    gray     = to_gray(src)
+    denoised = cv2.bilateralFilter(gray, 9, 50, 50)
+    clahe    = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    return clahe.apply(denoised)
+
+
 def enhance(src: np.ndarray) -> np.ndarray:
     """
     Full enhancement pipeline:
-      Grayscale → CLAHE → Gaussian → Gabor-bank (Sobel) → Adaptive threshold → Skeleton
+      Grayscale → Bilateral denoise → CLAHE → Gabor bank → Adaptive threshold → Morph cleanup → Skeleton
     """
     gray = to_gray(src)
 
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    clahe_out = clahe.apply(gray)
+    # Bilateral filter: removes JPEG/webcam compression noise while preserving ridge edges
+    denoised = cv2.bilateralFilter(gray, 9, 50, 50)
 
-    blurred = cv2.GaussianBlur(clahe_out, (3, 3), 1.0)
+    clahe     = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe_out = clahe.apply(denoised)
 
-    ridge_enhanced = _gabor_bank_enhance(blurred)
+    ridge_enhanced = _gabor_bank_enhance(clahe_out)
 
     binary = cv2.adaptiveThreshold(
         ridge_enhanced, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, 11, 2
     )
+
+    # Morphological cleanup: remove isolated noise pixels before skeletonization
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
     return _skeletonize(binary)
 
@@ -54,18 +71,35 @@ def detect_ridges(gray: np.ndarray) -> np.ndarray:
 
 def _gabor_bank_enhance(gray: np.ndarray) -> np.ndarray:
     """
-    Multi-angle ridge enhancement using Sobel gradients at 0°, 45°, 90°, 135°.
-    Computes gx and gy once, then projects onto each angle direction.
+    True Gabor filter bank for fingerprint ridge enhancement.
+
+    WHY GABOR (vs previous Sobel projection):
+    - Gabor = sinusoidal carrier modulated by Gaussian envelope — it's a
+      matched filter for the periodic ridge pattern at a specific frequency.
+    - Sobel just detects edges in one direction; it has no notion of ridge
+      periodicity, so it enhances all edges equally (noise, skin creases, etc.).
+    - Gabor at the right wavelength suppresses noise and non-ridge texture while
+      amplifying the regular ridge-valley alternation.
+
+    PARAMETERS (tuned for contactless webcam at 30-50 cm, HD resolution):
+    - lambd = 9 px  ← typical ridge pitch at this camera-to-finger distance
+    - sigma = 3.5   ← Gaussian envelope width (covers ~1 ridge period)
+    - gamma = 0.5   ← spatial aspect ratio (elongated along ridge direction)
+    - 8 orientations spanning 0°–157.5° covers all possible ridge angles
     """
-    temp32 = gray.astype(np.float32)
-    gx = cv2.Sobel(temp32, cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(temp32, cv2.CV_32F, 0, 1, ksize=3)
+    ksize  = 21
+    sigma  = 3.5
+    lambd  = 9.0
+    gamma  = 0.5
+    psi    = 0.0
 
     result = np.zeros(gray.shape, dtype=np.float32)
-    for angle_deg in [0, 45, 90, 135]:
-        theta    = np.radians(angle_deg)
-        response = np.abs(gx * np.cos(theta) + gy * np.sin(theta))
-        result   = np.maximum(result, response)
+    for theta in np.linspace(0, np.pi, 8, endpoint=False):
+        kernel   = cv2.getGaborKernel(
+            (ksize, ksize), sigma, theta, lambd, gamma, psi, ktype=cv2.CV_32F
+        )
+        filtered = cv2.filter2D(gray.astype(np.float32), cv2.CV_32F, kernel)
+        result   = np.maximum(result, np.abs(filtered))
 
     return cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
 

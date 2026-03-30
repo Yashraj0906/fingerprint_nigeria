@@ -1030,12 +1030,24 @@ async function sendToBackend() {
     const data = await res.json();
     alert('Backend processed ' + (data.results||[]).filter(r=>r.status==='success').length +
           '/4 fingers. Switch to Enroll tab to save.');
-    // Cache templates for enroll
+    // Cache templates for enroll + swap thumbnails for enhanced backend crops
     enrollBuffer = {};
+    const hand = document.getElementById('handSel').value;
     (data.results||[]).forEach(r => {
       if (r.status === 'success' && r.template) {
         enrollBuffer[r.finger_id] = { finger_id:r.finger_id, template:r.template,
                                       quality_score:r.quality_score };
+      }
+      // Replace raw webcam thumbnail with CLAHE-enhanced crop from backend
+      if (r.enhanced_image_b64) {
+        const key   = r.finger_id.replace(hand + '_', '');
+        const thumb = document.getElementById('thumb-' + key);
+        if (thumb) {
+          thumb.src       = 'data:image/jpeg;base64,' + r.enhanced_image_b64;
+          thumb.className = 'ft-thumb show';
+          thumb.title     = 'Enhanced — click to download';
+          thumb.onclick   = () => downloadImg(thumb.src, key.toLowerCase() + '_enhanced.jpg');
+        }
       }
     });
   } catch(e) { alert('Error: ' + e.message); }

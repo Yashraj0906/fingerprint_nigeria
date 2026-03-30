@@ -32,6 +32,7 @@ class FingerResult(BaseModel):
     liveness_passed:     bool
     liveness_confidence: Optional[float]
     template:            Optional[str]    # base64 ISO 19794-2, None if failed
+    enhanced_image_b64:  Optional[str]   = None  # CLAHE-enhanced grayscale crop for UI display
     error_code:          Optional[str]
     error_message:       Optional[str]
     guidance_message:    Optional[str]    # human-readable fix hint for live UI
