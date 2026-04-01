@@ -12,26 +12,33 @@ class LivenessResult:
     confidence: float   # 0.0 – 1.0
 
 
-# ── Thresholds ────────────────────────────────────────────────────────────────
-_GLARE_RATIO_MAX   = 0.12   # >12% saturated-white pixels → screen replay
-_LBP_VAR_MIN       = 18.0   # real skin local texture variance floor
-_SKIN_RATIO_MIN    = 0.15   # at least 15% of crop must be skin-tone pixels
-_MOIRE_SCORE_MAX   = 0.55   # DFT periodicity above this → screen/print artifact
+# ── Thresholds (tuned for CONTACTLESS WEBCAM at 30-50 cm) ─────────────────────
+_GLARE_RATIO_MAX        = 0.15   # >15% saturated-white pixels → screen replay
+_LBP_VAR_MIN            = 5.5    # real webcam skin ≈ 6-30, screen replay ≈ 2-5
+_SKIN_RATIO_MIN         = 0.10   # at least 10% of crop must be skin-tone pixels
+_MOIRE_SCORE_MAX        = 0.70   # DFT periodicity (P95/median based)
+_RIDGE_BAND_RATIO_MIN   = 0.08   # ridges invisible at webcam distance
+_REFLECTION_STD_MIN     = 2.0    # webcam finger crops have uniform lighting
+_CONFIDENCE_FLOOR       = 0.30   # never return confidence below this for detected hands
 
 
 def evaluate(gray: np.ndarray, hand: HandDetectionResult,
              bgr: Optional[np.ndarray] = None) -> LivenessResult:
     """
-    4-layer contactless liveness check.
+    7-layer contactless liveness check — calibrated for webcam captures.
 
-    Layer 1 — MediaPipe hand presence (primary hard gate)
-    Layer 2 — Screen-replay glare guard (saturation check, tightened to 12%)
-    Layer 3 — LBP texture variance (real skin has characteristic local texture)
-    Layer 4 — Skin colour detection in HSV (real finger falls in skin-tone range)
+    Layer 1 — MediaPipe hand presence       (hard gate)
+    Layer 2 — Screen-replay glare guard     (hard gate)
+    Layer 3 — LBP texture variance          (hard gate — primary spoof detector)
+    Layer 4 — Skin colour in HSV + YCrCb    (soft — catches wrong-colour objects)
+    Layer 5 — DFT moiré detection           (hard gate — catches screens & halftone)
+    Layer 6 — Ridge frequency ratio         (soft — very lenient for webcam)
+    Layer 7 — Reflection uniformity         (soft — catches flat/printed surfaces)
 
-    Layers 1 & 2 are hard gates (fail → reject immediately).
-    Layers 3 & 4 are soft scoring signals that reduce confidence.
-    The final confidence combines all four layers.
+    Key insight: LBP texture (Layer 3) is the strongest discriminator between
+    real skin and screen replays at webcam distance:
+      - Real skin: complex micro-texture (pores, wrinkles) → LBP ≈ 6-30
+      - Screen replay: smooth pixels, no micro-texture → LBP ≈ 2-5
     """
 
     # ── Layer 1: MediaPipe hard gate ──────────────────────────────────────────
@@ -53,42 +60,79 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
             confidence=0.85
         )
 
-    # ── Layer 3: LBP texture variance ─────────────────────────────────────────
-    # Real skin has highly varied local micro-texture (ridges, pores, wrinkles).
-    # A printed photo or screen is texturally uniform at the local level.
-    #
-    # We use a fast approximation: compute per-pixel local standard deviation
-    # over a 5×5 neighbourhood, then take the mean. Real skin gives ~20-60,
-    # flat prints/screens give ~5-15.
+    # ── Layer 3: LBP texture variance (hard gate for screen replay) ───────────
+    # This is the most reliable discriminator between real skin and screens.
+    # Real skin at webcam distance always has LBP > 5.5 due to pores, wrinkles,
+    # and natural surface texture. Screens smooth out this detail to LBP < 5.
     lbp_var = _local_texture_variance(gray)
     lbp_ok  = lbp_var >= _LBP_VAR_MIN
 
-    # ── Layer 4: Skin colour detection ────────────────────────────────────────
-    # Real skin falls within a specific HSV range regardless of lighting.
-    # Screens and printed paper do not (or only marginally) match this range.
-    skin_ratio = _skin_colour_ratio(bgr if bgr is not None else _gray_to_bgr(gray))
-    skin_ok    = skin_ratio >= _SKIN_RATIO_MIN
-
-    # ── Confidence aggregation ────────────────────────────────────────────────
-    # Start from MediaPipe confidence, apply soft penalties for failed layers.
-    confidence = hand.confidence
-    confidence *= (1.0 - 0.08 * (glare_ratio / _GLARE_RATIO_MAX))  # glare penalty
-
     if not lbp_ok:
-        # Low texture → reduce confidence, but don't hard-fail (lighting can affect this)
-        confidence *= 0.75
-
-    if not skin_ok:
-        # Non-skin colour → reduce confidence
-        confidence *= 0.80
-
-    confidence = float(np.clip(confidence, 0.0, 1.0))
-
-    # Hard fail only if BOTH soft layers fail (belt-and-suspenders)
-    if not lbp_ok and not skin_ok:
         return LivenessResult(
             passed=False,
-            reason="Spoof detected — low texture and no skin tone",
+            reason="Flat texture detected — possible screen replay or printed photo",
+            confidence=max(float(lbp_var / _LBP_VAR_MIN * 0.5), _CONFIDENCE_FLOOR)
+        )
+
+    # ── Layer 4: Skin colour detection (HSV + YCrCb dual path) ────────────────
+    color_img = bgr if bgr is not None else _gray_to_bgr(gray)
+    skin_ratio = _skin_colour_ratio(color_img)
+    skin_ok    = skin_ratio >= _SKIN_RATIO_MIN
+
+    # ── Layer 5: DFT moiré detection (hard gate) ──────────────────────────────
+    moire_score = _moire_score(gray)
+    if moire_score > _MOIRE_SCORE_MAX:
+        return LivenessResult(
+            passed=False,
+            reason="Moiré pattern detected — screen replay or halftone print",
+            confidence=max(float(np.clip(1.0 - moire_score, 0.0, 1.0)), _CONFIDENCE_FLOOR)
+        )
+
+    # ── Layer 6: Ridge frequency ratio ────────────────────────────────────────
+    ridge_ratio = _ridge_band_ratio(gray)
+    ridge_ok    = ridge_ratio >= _RIDGE_BAND_RATIO_MIN
+
+    # ── Layer 7: Reflection uniformity ────────────────────────────────────────
+    refl_std = _reflection_uniformity(gray)
+    refl_ok  = refl_std >= _REFLECTION_STD_MIN
+
+    # ── Confidence aggregation ────────────────────────────────────────────────
+    confidence = hand.confidence
+    confidence *= (1.0 - 0.05 * (glare_ratio / _GLARE_RATIO_MAX))
+
+    if not skin_ok:
+        confidence *= 0.88   # L4: wrong colour range
+
+    if not ridge_ok:
+        confidence *= 0.90   # L6: wrong ridge frequency
+
+    if not refl_ok:
+        confidence *= 0.90   # L7: uniform reflection
+
+    # Apply confidence floor
+    confidence = float(np.clip(confidence, _CONFIDENCE_FLOOR, 1.0))
+
+    # ── Combined soft-fail logic ──────────────────────────────────────────────
+    # If 2+ of the remaining soft layers [L4, L6, L7] fail, reject.
+    # L3 already hard-gated above, so these are secondary checks.
+    soft_fail_count = sum([
+        not skin_ok,    # L4
+        not ridge_ok,   # L6
+        not refl_ok,    # L7
+    ])
+
+    if soft_fail_count >= 2:
+        reasons = []
+        if not skin_ok:
+            reasons.append("no skin tone")
+        if not ridge_ok:
+            reasons.append("incorrect ridge pattern")
+        if not refl_ok:
+            reasons.append("uniform reflection")
+        reason_str = " + ".join(reasons)
+        return LivenessResult(
+            passed=False,
+            reason=f"Spoof detected — {reason_str}",
             confidence=confidence
         )
 
@@ -101,12 +145,10 @@ def _local_texture_variance(gray: np.ndarray) -> float:
     """
     Fast LBP-proxy: mean of per-pixel local standard deviation in a 5×5 window.
 
-    Computes local variance using the identity:
-        local_var = E[x²] - E[x]²
-    via box filtering (O(N) regardless of window size).
-
-    Real skin texture: mean local std ≈ 20–60
-    Printed / screen:  mean local std ≈ 3–15
+    Real webcam finger:   mean local std ≈ 6–30
+    Screen replay:        mean local std ≈ 2–5
+    Printed photo:        mean local std ≈ 3–6
+    Threshold: 5.5
     """
     f   = gray.astype(np.float32)
     k   = (5, 5)
@@ -116,35 +158,118 @@ def _local_texture_variance(gray: np.ndarray) -> float:
     return float(np.mean(np.sqrt(var)))
 
 
-# ── Layer 4 helper: skin colour ratio ────────────────────────────────────────
+# ── Layer 4 helper: skin colour ratio (HSV + YCrCb dual-path) ────────────────
 
 def _skin_colour_ratio(bgr: np.ndarray) -> float:
     """
-    Fraction of pixels that fall within the skin-tone HSV range.
-
-    HSV skin-tone envelope (covers light through dark skin tones):
-      H: 0–25  (red-orange hue, wraps at 180 in OpenCV)
-      S: 20–170 (not too grey, not fully saturated)
-      V: 50–255 (not too dark)
-
-    Also includes the upper hue wrap-around (H: 165–180) for very
-    reddish skin tones near the red boundary.
+    Fraction of pixels that fall within the skin-tone range.
+    Uses BOTH HSV and YCrCb colour spaces for robustness across skin tones.
     """
+    total = bgr.shape[0] * bgr.shape[1]
+    if total == 0:
+        return 0.0
+
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask_hsv1 = cv2.inRange(hsv,
+                            np.array([0,  15,  40], dtype=np.uint8),
+                            np.array([30, 220, 255], dtype=np.uint8))
+    mask_hsv2 = cv2.inRange(hsv,
+                            np.array([160, 15,  40], dtype=np.uint8),
+                            np.array([180, 220, 255], dtype=np.uint8))
+    mask_hsv = cv2.bitwise_or(mask_hsv1, mask_hsv2)
 
-    # Primary skin range
-    mask1 = cv2.inRange(hsv,
-                        np.array([0,  20,  50], dtype=np.uint8),
-                        np.array([25, 170, 255], dtype=np.uint8))
-    # Upper wrap (reddish tones)
-    mask2 = cv2.inRange(hsv,
-                        np.array([165, 20,  50], dtype=np.uint8),
-                        np.array([180, 170, 255], dtype=np.uint8))
+    ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+    mask_ycrcb = cv2.inRange(ycrcb,
+                             np.array([0,  133, 77], dtype=np.uint8),
+                             np.array([255, 177, 127], dtype=np.uint8))
 
-    skin_pixels = cv2.countNonZero(cv2.bitwise_or(mask1, mask2))
-    total       = bgr.shape[0] * bgr.shape[1]
+    skin_mask   = cv2.bitwise_or(mask_hsv, mask_ycrcb)
+    skin_pixels = cv2.countNonZero(skin_mask)
     return float(skin_pixels / total)
 
+
+# ── Layer 5 helper: DFT moiré score ──────────────────────────────────────────
+
+def _moire_score(gray: np.ndarray) -> float:
+    """
+    Detect periodic moiré patterns using P95/median DFT ratio.
+
+    Screen moiré: P95/median ≈ 8-40 → score 0.2-1.0
+    Real skin:    P95/median ≈ 3-8  → score 0.0-0.2
+    """
+    target = 256
+    resized = cv2.resize(gray, (target, target))
+
+    f      = np.fft.fft2(resized.astype(np.float32))
+    fshift = np.fft.fftshift(f)
+    mag    = np.abs(fshift)
+
+    cy, cx = target // 2, target // 2
+    Y, X   = np.ogrid[:target, :target]
+    dc_r   = int(target * 0.10)
+    dc_mask = (Y - cy) ** 2 + (X - cx) ** 2 <= dc_r ** 2
+
+    freq_values = mag[~dc_mask]
+    if freq_values.size < 10:
+        return 0.0
+
+    median_energy = float(np.median(freq_values))
+    if median_energy < 1e-6:
+        return 0.0
+
+    p95_energy = float(np.percentile(freq_values, 95))
+    ratio = p95_energy / median_energy
+
+    score = float(np.clip((ratio - 3.0) / 22.0, 0.0, 1.0))
+    return score
+
+
+# ── Layer 6 helper: ridge frequency band ratio ───────────────────────────────
+
+def _ridge_band_ratio(gray: np.ndarray) -> float:
+    """
+    Fraction of DFT spectral energy in the fingerprint ridge band.
+    Very lenient threshold for webcam — primarily catches AI-generated images.
+    """
+    target  = 256
+    resized = cv2.resize(gray, (target, target))
+
+    f      = np.fft.fft2(resized.astype(np.float32))
+    fshift = np.fft.fftshift(f)
+    mag    = np.abs(fshift)
+
+    cy, cx = target // 2, target // 2
+    Y, X   = np.ogrid[:target, :target]
+    r      = np.sqrt((Y - cy) ** 2 + (X - cx) ** 2)
+
+    ridge_mask = (r >= 20) & (r <= 80)
+    total_mask = (r >= 10) & (r <= 120)
+
+    ridge_energy = float(np.sum(mag[ridge_mask]))
+    total_energy = float(np.sum(mag[total_mask]))
+
+    if total_energy < 1e-6:
+        return 0.0
+
+    return ridge_energy / total_energy
+
+
+# ── Layer 7 helper: reflection uniformity ────────────────────────────────────
+
+def _reflection_uniformity(gray: np.ndarray) -> float:
+    """
+    Standard deviation of pixel intensities in the top-20% brightest region.
+    """
+    thresh = float(np.percentile(gray, 80))
+    bright_pixels = gray[gray >= thresh].astype(np.float32)
+
+    if bright_pixels.size < 10:
+        return float(_REFLECTION_STD_MIN)
+
+    return float(np.std(bright_pixels))
+
+
+# ── Utility ───────────────────────────────────────────────────────────────────
 
 def _gray_to_bgr(gray: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)

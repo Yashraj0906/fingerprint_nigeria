@@ -56,7 +56,8 @@ def process_multi_capture(request: MultiCaptureRequest):
 
     Accepts a single frame + hand side ("RIGHT" | "LEFT").
     MediaPipe detects all 4 fingers and extracts individual crops.
-    Each finger is quality-checked + template-encoded independently.
+    Each finger is quality-checked + liveness-checked + template-encoded
+    independently using its own crop (not the full frame).
     """
     hand_prefix = request.hand.upper()  # "RIGHT" or "LEFT"
     finger_ids  = [f"{hand_prefix}_{k}" for k in _FINGER_KEYS]
@@ -72,8 +73,6 @@ def process_multi_capture(request: MultiCaptureRequest):
             guidance="Image decode failed", results=results
         )
 
-    gray = image_processor.to_gray(bgr)
-
     # ── Hand detection ────────────────────────────────────────────────────────
     hand = hand_detector.detect_all_fingers(bgr)
 
@@ -87,9 +86,6 @@ def process_multi_capture(request: MultiCaptureRequest):
             overall_status="failed", hand=request.hand,
             guidance=hand.guidance, results=results
         )
-
-    # Liveness is per-hand (one check for all 4 fingers)
-    liveness = liveness_detector.evaluate(gray, hand, bgr)
 
     results: List[FingerResult] = []
 
@@ -131,7 +127,9 @@ def process_multi_capture(request: MultiCaptureRequest):
             ))
             continue
 
-        # Liveness check
+        # ── FIX: Liveness runs on finger crop, not full frame ─────────────────
+        liveness = liveness_detector.evaluate(roi_gray, hand, roi_bgr)
+
         if not liveness.passed:
             results.append(FingerResult(
                 finger_id=finger_id, status="failed",
@@ -189,7 +187,7 @@ def process_multi_capture(request: MultiCaptureRequest):
     overall = "success" if success_count == 4 \
         else "partial" if success_count > 0 else "failed"
 
-    # Aggregate guidance: hand-level first, then worst finger
+    # Aggregate guidance: worst finger first
     guidance = hand.guidance
     if not guidance:
         for r in results:
@@ -213,6 +211,10 @@ def analyze_frame(request: AnalyzeRequest):
     Runs MediaPipe hand detection + quality scoring on each frame.
     Returns per-finger quality scores and bounding boxes (as % of image size).
     Does NOT encode templates — fast enough for 5-10 fps polling.
+
+    FIX: Liveness is evaluated per finger crop (not the full frame).
+    This prevents JPEG block artifacts and background pixels from
+    triggering the moiré hard-gate and collapsing LBP texture scores.
     """
     hand_prefix = request.hand.upper()
 
@@ -223,14 +225,12 @@ def analyze_frame(request: AnalyzeRequest):
                                guidance="Image decode failed", fingers=[])
 
     h_img, w_img = bgr.shape[:2]
-    gray = image_processor.to_gray(bgr)
     hand = hand_detector.detect_all_fingers(bgr)
 
     if not hand.detected:
         return AnalyzeResponse(hand_detected=False, hand=request.hand,
                                guidance=hand.guidance or "No hand detected", fingers=[])
 
-    liveness = liveness_detector.evaluate(gray, hand, bgr)
     fingers_out = []
 
     for finger_key in _FINGER_KEYS:
@@ -246,8 +246,12 @@ def analyze_frame(request: AnalyzeRequest):
             ))
             continue
 
-        roi_gray = image_processor.to_gray(fc.crop)
-        q = quality_analyzer.analyze(roi_gray)
+        # ── FIX: use finger crop for both quality AND liveness ────────────────
+        roi_bgr  = fc.crop
+        roi_gray = image_processor.to_gray(roi_bgr)
+
+        q        = quality_analyzer.analyze(roi_gray)
+        liveness = liveness_detector.evaluate(roi_gray, hand, roi_bgr)
 
         bbox_pct = None
         if fc.bbox:
@@ -257,6 +261,13 @@ def analyze_frame(request: AnalyzeRequest):
                 w=round(w / w_img, 4), h=round(h / h_img, 4)
             )
 
+        # Use liveness failure reason as guidance when liveness fails,
+        # otherwise use quality guidance
+        if liveness.passed:
+            finger_guidance = q.guidance_message
+        else:
+            finger_guidance = liveness.reason or q.guidance_message
+
         fingers_out.append(AnalyzeFingerResult(
             finger_id=finger_id, detected=True,
             quality_score=round(q.score, 2),
@@ -264,7 +275,7 @@ def analyze_frame(request: AnalyzeRequest):
             illum_score=round(q.contrast_score, 2),
             liveness=liveness.passed,
             liveness_conf=round(liveness.confidence, 3),
-            guidance=q.guidance_message,
+            guidance=finger_guidance,
             bbox_pct=bbox_pct
         ))
 
@@ -302,7 +313,6 @@ def _process_single(finger_id: str, image_base64: str) -> FingerResult:
     except Exception as e:
         return _failed(finger_id, "DECODE_ERROR", str(e))
 
-    gray = image_processor.to_gray(bgr)
     hand = hand_detector.detect_finger(bgr)
 
     if not hand.detected:
@@ -310,6 +320,7 @@ def _process_single(finger_id: str, image_base64: str) -> FingerResult:
                        hand.guidance or "No hand detected",
                        guidance=hand.guidance)
 
+    # ── FIX: use crop for quality AND liveness, not full frame ────────────────
     roi_bgr  = hand.finger_crop if hand.finger_crop is not None else bgr
     roi_gray = image_processor.to_gray(roi_bgr)
     q        = quality_analyzer.analyze(roi_gray)
@@ -328,7 +339,8 @@ def _process_single(finger_id: str, image_base64: str) -> FingerResult:
             guidance_message=q.guidance_message
         )
 
-    liveness = liveness_detector.evaluate(gray, hand, bgr)
+    # Liveness on finger crop — not the full frame
+    liveness = liveness_detector.evaluate(roi_gray, hand, roi_bgr)
 
     if not liveness.passed:
         return FingerResult(

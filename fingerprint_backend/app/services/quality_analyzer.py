@@ -49,7 +49,11 @@ def analyze(gray: np.ndarray) -> QualityResult:
     else:
         verdict = Verdict.REJECT
 
-    guidance = _guidance_message(blur, contrast, ridges, coverage, float(gray.mean()))
+    # Compute raw coverage ratio for guidance (different from score)
+    _, binary_raw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    raw_coverage_ratio = cv2.countNonZero(binary_raw) / (gray.shape[0] * gray.shape[1])
+
+    guidance = _guidance_message(blur, contrast, ridges, coverage, float(gray.mean()), raw_coverage_ratio)
 
     return QualityResult(composite, blur, contrast, ridges, coverage, verdict, guidance)
 
@@ -57,7 +61,8 @@ def analyze(gray: np.ndarray) -> QualityResult:
 # ── Guidance ──────────────────────────────────────────────────────────────────
 
 def _guidance_message(blur: float, contrast: float, ridge: float,
-                      coverage: float, brightness: float) -> Optional[str]:
+                      coverage: float, brightness: float,
+                      raw_coverage_ratio: float = 0.5) -> Optional[str]:
     """Single most-important actionable hint. Priority: lighting > blur > position > ridges."""
     if brightness < 55:
         return "Too dark — move to better lighting"
@@ -65,9 +70,9 @@ def _guidance_message(blur: float, contrast: float, ridge: float,
         return "Too bright — reduce glare or reflections"
     if blur < 35:
         return "Hold still — finger is blurry"
-    if coverage < 30:
+    if raw_coverage_ratio < 0.20:
         return "Move closer — finger too small in frame"
-    if coverage > 95:
+    if raw_coverage_ratio > 0.90:
         return "Move hand back — too close to camera"
     if contrast < 30:
         return "Improve lighting — low contrast"
