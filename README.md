@@ -3,7 +3,7 @@
 This repository contains the Python (FastAPI/OpenCV) backend and algorithm validation engine for the Contactless Fingerprint Capture SDK. 
 
 ## 🛡️ Liveness Detection Engine (AIML Implementation)
-**Owner/Developer:** Yashraj Kumar (AIML Intern)
+
 
 The core focus of this implementation is the highly performant, fully stateless **10-Layer Liveness Detection System**. This system was designed to detect physical presentation attacks (Spoofing) entirely via Mathematical Computer Vision algorithms, avoiding the heavy memory overhead of deep learning models to ensure offline, mid-range mobile compatibility.
 
