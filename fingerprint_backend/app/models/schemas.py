@@ -31,6 +31,7 @@ class FingerResult(BaseModel):
     coverage_score:      Optional[float]
     liveness_passed:     bool
     liveness_confidence: Optional[float]
+    is_ai_generated:     bool             = False
     template:            Optional[str]    # base64 ISO 19794-2, None if failed
     enhanced_image_b64:  Optional[str]   = None  # CLAHE-enhanced grayscale crop for UI display
     error_code:          Optional[str]
@@ -54,6 +55,7 @@ class AnalyzeFingerResult(BaseModel):
     illum_score:  Optional[float]   # contrast_score
     liveness:     bool
     liveness_conf: Optional[float]
+    is_ai_generated: bool = False
     guidance:     Optional[str]
     bbox_pct:     Optional[BboxPct]
 
