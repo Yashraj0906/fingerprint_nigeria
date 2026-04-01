@@ -42,12 +42,13 @@ jobs:
             https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-android-sdk.zip \
             -O /tmp/opencv-android.zip
           unzip -q /tmp/opencv-android.zip -d $HOME/opencv-android
-          echo "OPENCV_ANDROID_SDK=$HOME/opencv-android/OpenCV-android-sdk" >> $GITHUB_ENV
+          # Dynamically locate OpenCV.cmake — handles any version-specific dir name
+          OPENCV_CMAKE=$(find $HOME/opencv-android -name "OpenCV.cmake" | head -1)
+          echo "Found OpenCV.cmake at: $OPENCV_CMAKE"
+          OPENCV_SDK=$(echo "$OPENCV_CMAKE" | sed 's|/sdk/native/jni/OpenCV.cmake||')
+          echo "OPENCV_ANDROID_SDK=$OPENCV_SDK" >> $GITHUB_ENV
+          echo "OpenCV SDK root: $OPENCV_SDK"
 
-      # Use setup-gradle to install Gradle 8.6 as the system `gradle` command.
-      # We do NOT run `gradle wrapper` — that step parses build.gradle which
-      # fails if AGP can't be resolved before the daemon starts.
-      # Instead we call `gradle` directly from the installed version.
       - name: Setup Gradle 8.6
         uses: gradle/actions/setup-gradle@v3
         with:
@@ -66,9 +67,7 @@ jobs:
           if-no-files-found: error
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 2 — iOS .xcframework  (macOS 15 runner — Xcode 16)
-# macos-14 has Xcode 15 which cannot open XcodeGen-generated objectVersion 77.
-# macos-15 ships Xcode 16, which is compatible.
+# JOB 2 — iOS .xcframework  (macOS 15 — Xcode 16)
 # ─────────────────────────────────────────────────────────────────────────────
   build-ios-xcframework:
     name: Build iOS XCFramework
@@ -87,7 +86,10 @@ jobs:
             https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-ios-framework.zip \
             -O /tmp/opencv-ios.zip
           unzip -q /tmp/opencv-ios.zip -d $HOME/opencv-ios
-          echo "OPENCV_FRAMEWORK_PATH=$HOME/opencv-ios" >> $GITHUB_ENV
+          # Dynamically locate opencv2.framework
+          OPENCV_FW_DIR=$(find $HOME/opencv-ios -name "opencv2.framework" -type d | head -1 | xargs dirname)
+          echo "Found opencv2.framework in: $OPENCV_FW_DIR"
+          echo "OPENCV_FRAMEWORK_PATH=$OPENCV_FW_DIR" >> $GITHUB_ENV
 
       - name: Generate Xcode project (XcodeGen)
         working-directory: fingerprint_backend_cpp/ios
@@ -95,6 +97,8 @@ jobs:
 
       - name: Build — iOS Device (arm64)
         working-directory: fingerprint_backend_cpp/ios
+        # No xcpretty pipe — bash pipes return last command's exit code, which
+        # would be xcpretty's (always 0), hiding xcodebuild failures.
         run: |
           xcodebuild archive \
             -scheme FingerprintSDK \
@@ -105,8 +109,11 @@ jobs:
             OPENCV_FRAMEWORK_PATH=$OPENCV_FRAMEWORK_PATH \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            | xcpretty
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Debug — list device archive contents
+        if: always()
+        run: find ${{ runner.temp }}/ios.xcarchive -type f 2>/dev/null | head -40 || echo "Archive not found"
 
       - name: Build — iOS Simulator (arm64 + x86_64)
         working-directory: fingerprint_backend_cpp/ios
@@ -120,8 +127,7 @@ jobs:
             OPENCV_FRAMEWORK_PATH=$OPENCV_FRAMEWORK_PATH \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            | xcpretty
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Create XCFramework
         run: |
