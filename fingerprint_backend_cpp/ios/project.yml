@@ -1,17 +1,17 @@
 # XcodeGen project definition
-# Generate with: xcodegen generate
-# CI installs xcodegen via: brew install xcodegen
+# Generate with: xcodegen generate  (requires xcodegen >= 2.40)
+# CI uses macos-15 runner (Xcode 16) — objectVersion 77 is compatible.
 
 name: FingerprintSDK
 options:
   bundleIdPrefix: com.yellowsense
   deploymentTarget:
     iOS: "13.0"
-  xcodeVersion: "15.0"
+  # Let XcodeGen use its default objectVersion (77 = Xcode 16)
+  createIntermediateGroups: true
 
 settings:
   base:
-    SWIFT_VERSION: "5.9"
     CLANG_CXX_LANGUAGE_STANDARD: c++17
     CLANG_CXX_LIBRARY: libc++
     GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) OPENCV_DISABLE_EIGEN_TENSOR_SUPPORT=1"
@@ -24,16 +24,16 @@ targets:
     deploymentTarget: "13.0"
 
     sources:
-      # Objective-C++ bridge classes
+      # Objective-C++ bridge (ios/Classes/)
       - path: Classes
         type: group
 
-      # Shared C++ core — project.yml lives in ios/, so ../src = fingerprint_backend_cpp/src
+      # Shared C++ core — ../src relative to ios/ = fingerprint_backend_cpp/src
       - path: ../src
         type: group
         buildPhase: sources
 
-      # Headers
+      # C++ headers — ../include relative to ios/ = fingerprint_backend_cpp/include
       - path: ../include
         type: group
         buildPhase: headers
@@ -47,21 +47,19 @@ targets:
         BUILD_LIBRARY_FOR_DISTRIBUTION: YES
         CLANG_ENABLE_MODULES: YES
 
-        # OpenCV framework path injected at build time via OPENCV_FRAMEWORK_PATH env var
+        # $(PROJECT_DIR) = fingerprint_backend_cpp/ios/ after xcodegen generate
         HEADER_SEARCH_PATHS:
           - "$(PROJECT_DIR)/../include"
           - "$(OPENCV_FRAMEWORK_PATH)/opencv2.framework/Headers"
+
+        # Xcode will search OPENCV_FRAMEWORK_PATH (passed as -build-setting at
+        # xcodebuild time) for opencv2.framework.  No hard-coded path needed here.
         FRAMEWORK_SEARCH_PATHS:
           - "$(OPENCV_FRAMEWORK_PATH)"
+
         OTHER_LDFLAGS:
           - "-framework opencv2"
 
-        # Code signing (CI: unsigned; release: set in Xcode organiser)
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
-
-    dependencies:
-      - framework: $(OPENCV_FRAMEWORK_PATH)/opencv2.framework
-        embed: false
-        implicit: true

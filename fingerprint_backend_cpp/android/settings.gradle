@@ -1,4 +1,8 @@
 pluginManagement {
+    plugins {
+        // Declare AGP version here so build.gradle can omit it
+        id 'com.android.library' version '8.3.2'
+    }
     repositories {
         google()
         mavenCentral()
