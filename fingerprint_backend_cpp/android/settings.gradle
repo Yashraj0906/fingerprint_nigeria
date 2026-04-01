@@ -15,5 +15,3 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "fingerprint_sdk"
-include ':fingerprint_sdk'
-project(':fingerprint_sdk').projectDir = file('.')

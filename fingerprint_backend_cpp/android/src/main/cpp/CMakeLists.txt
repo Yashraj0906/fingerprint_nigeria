@@ -12,8 +12,8 @@ endif()
 
 include(${OPENCV_ANDROID_SDK_PATH}/sdk/native/jni/OpenCV.cmake)
 
-# Core sources live two levels up from android/
-set(CORE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../)
+# Core sources: CMakeLists is at android/src/main/cpp/ → 4 levels up = fingerprint_backend_cpp/
+set(CORE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../)
 
 set(CORE_SOURCES
     ${CORE_ROOT}/src/image_processor.cpp

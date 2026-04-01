@@ -28,13 +28,13 @@ targets:
       - path: Classes
         type: group
 
-      # Shared C++ core (two levels up)
-      - path: ../../src
+      # Shared C++ core — project.yml lives in ios/, so ../src = fingerprint_backend_cpp/src
+      - path: ../src
         type: group
         buildPhase: sources
 
       # Headers
-      - path: ../../include
+      - path: ../include
         type: group
         buildPhase: headers
         headerVisibility: project
@@ -49,7 +49,7 @@ targets:
 
         # OpenCV framework path injected at build time via OPENCV_FRAMEWORK_PATH env var
         HEADER_SEARCH_PATHS:
-          - "$(PROJECT_DIR)/../../include"
+          - "$(PROJECT_DIR)/../include"
           - "$(OPENCV_FRAMEWORK_PATH)/opencv2.framework/Headers"
         FRAMEWORK_SEARCH_PATHS:
           - "$(OPENCV_FRAMEWORK_PATH)"
