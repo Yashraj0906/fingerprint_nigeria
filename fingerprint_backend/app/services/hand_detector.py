@@ -48,6 +48,7 @@ class HandDetectionResult:
     hand_side:   Optional[str] = None           # "Right" | "Left"
     fingers:     Dict[str, FingerCrop] = field(default_factory=dict)
     guidance:    Optional[str] = None           # real-time guidance text
+    raw_landmarks: Optional[object] = None      # Raw MediaPipe NormalizedLandmarkList
 
 
 # ── Detector class ────────────────────────────────────────────────────────────
@@ -124,6 +125,7 @@ class HandDetector:
         return HandDetectionResult(
             detected=True, confidence=0.88,
             finger_crop=crop, bbox=bbox,
+            raw_landmarks=lm,
         )
 
     def detect_all_fingers(self, frame: np.ndarray) -> HandDetectionResult:
@@ -175,6 +177,7 @@ class HandDetector:
                 hand_side=hand_side,
                 fingers=fingers,
                 guidance=geometry_guidance,
+                raw_landmarks=lm,
             )
 
         # ── Per-finger extension + crop ───────────────────────────────────────
@@ -204,6 +207,7 @@ class HandDetector:
             hand_side=hand_side,
             fingers=fingers,
             guidance=guidance,
+            raw_landmarks=lm,
         )
 
     def is_finger_vertical(self, frame: np.ndarray, tolerance: int = 35) -> bool:

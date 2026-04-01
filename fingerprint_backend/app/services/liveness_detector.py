@@ -10,6 +10,7 @@ class LivenessResult:
     passed:     bool
     reason:     Optional[str]
     confidence: float   # 0.0 – 1.0
+    is_ai_generated: bool = False
 
 
 # ── Thresholds (tuned for CONTACTLESS WEBCAM at 30-50 cm) ─────────────────────
@@ -17,15 +18,17 @@ _GLARE_RATIO_MAX        = 0.15   # >15% saturated-white pixels → screen replay
 _LBP_VAR_MIN            = 5.5    # real webcam skin ≈ 6-30, screen replay ≈ 2-5
 _SKIN_RATIO_MIN         = 0.10   # at least 10% of crop must be skin-tone pixels
 _MOIRE_SCORE_MAX        = 0.70   # DFT periodicity (P95/median based)
+_MOLD_CR_STD_MIN        = 3.5    # real skin Cr variance > 10.0 due to blood; molds are painted/flat
 _RIDGE_BAND_RATIO_MIN   = 0.08   # ridges invisible at webcam distance
 _REFLECTION_STD_MIN     = 2.0    # webcam finger crops have uniform lighting
 _CONFIDENCE_FLOOR       = 0.30   # never return confidence below this for detected hands
+_SPECTRAL_DECAY_MAX     = 0.25   # natural images high-mid ratio < 0.25 (AI flatter decay > 0.30)
 
 
 def evaluate(gray: np.ndarray, hand: HandDetectionResult,
              bgr: Optional[np.ndarray] = None) -> LivenessResult:
     """
-    7-layer contactless liveness check — calibrated for webcam captures.
+    9-layer contactless liveness & deepfake check — calibrated for webcam captures.
 
     Layer 1 — MediaPipe hand presence       (hard gate)
     Layer 2 — Screen-replay glare guard     (hard gate)
@@ -34,7 +37,13 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
     Layer 5 — DFT moiré detection           (hard gate — catches screens & halftone)
     Layer 6 — Ridge frequency ratio         (soft — very lenient for webcam)
     Layer 7 — Reflection uniformity         (soft — catches flat/printed surfaces)
+    Layer 8 — Spectral Decay Anomaly        (hard gate — catches AI/Deepfake checkerboard artifacts)
+    Layer 9 — Anatomical Sanity Check       (hard gate — catches AI hallucinations/impossible joints)
+    Layer 10 — Sub-Surface Mold Detector    (hard gate — catches 3D physical silicone/latex molds)
 
+    Combined Secondary Fail Logic:
+      2-of-3 [L4, L6, L7] must FAIL together to reject.
+    
     Key insight: LBP texture (Layer 3) is the strongest discriminator between
     real skin and screen replays at webcam distance:
       - Real skin: complex micro-texture (pores, wrinkles) → LBP ≈ 6-30
@@ -47,6 +56,46 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
             passed=False,
             reason="No hand detected — place your finger in the frame",
             confidence=0.95
+        )
+
+    # ── Layer 10: 3D Silicone/Latex Mold Detector ─────────────────────────────
+    # Real skin has blood beneath the surface causing variations in the Red channel 
+    # (Sub-surface scattering). Physical PlayDoh/Silicone molds are painted a 
+    # flat, lifeless color. We measure the variance of the Cr (Red-Chroma) channel.
+    if bgr is not None:
+        ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+        cr_channel = ycrcb[:, :, 1]
+        cr_std = np.std(cr_channel)
+        if cr_std < _MOLD_CR_STD_MIN:
+            return LivenessResult(
+                passed=False,
+                reason="Physical replica/Mold detected — no sub-surface blood flow",
+                confidence=0.10,
+                is_ai_generated=False
+            )
+
+    # ── Deepfake Hard Gates (Run before Glare/Spoof checks) ───────────────────
+    # We run these strictly first so the API explicitly warns about AI generation
+    # instead of throwing a generic "Glare" or "Flat Texture" error for deepfakes.
+
+    # ── Layer 8: Spectral Decay Anomaly (Deepfake FFT) 
+    spectral_decay_ok = not _spectral_decay_anomaly(gray)
+    if not spectral_decay_ok:
+        return LivenessResult(
+            passed=False,
+            reason="Deepfake detected — artificial frequency spectrum",
+            confidence=0.10,
+            is_ai_generated=True
+        )
+
+    # ── Layer 9: Anatomical Sanity Check (Deepfake Geometry) 
+    anatomy_ok = _anatomical_sanity_check(hand)
+    if not anatomy_ok:
+        return LivenessResult(
+            passed=False,
+            reason="Deepfake detected — anatomical anomaly",
+            confidence=0.10,
+            is_ai_generated=True
         )
 
     # ── Layer 2: Screen-replay glare guard ────────────────────────────────────
@@ -114,11 +163,10 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
 
     # ── Combined soft-fail logic ──────────────────────────────────────────────
     # If 2+ of the remaining soft layers [L4, L6, L7] fail, reject.
-    # L3 already hard-gated above, so these are secondary checks.
     soft_fail_count = sum([
-        not skin_ok,    # L4
-        not ridge_ok,   # L6
-        not refl_ok,    # L7
+        not skin_ok,           # L4
+        not ridge_ok,          # L6
+        not refl_ok,           # L7
     ])
 
     if soft_fail_count >= 2:
@@ -132,7 +180,7 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
         reason_str = " + ".join(reasons)
         return LivenessResult(
             passed=False,
-            reason=f"Spoof detected — {reason_str}",
+            reason=f"Spoof/Deepfake detected — {reason_str}",
             confidence=confidence
         )
 
@@ -267,6 +315,81 @@ def _reflection_uniformity(gray: np.ndarray) -> float:
         return float(_REFLECTION_STD_MIN)
 
     return float(np.std(bright_pixels))
+
+
+# ── Layer 8 helper: Spectral Decay Anomaly ───────────────────────────────────
+
+def _spectral_decay_anomaly(gray: np.ndarray) -> bool:
+    """
+    Detect unnatural high-frequency bumps caused by GAN/Diffusion upsamplers.
+    Natural images decay roughly as 1/f. AI generators often leave a 'flat tail'
+    or spike in the high frequency radial profile (checkerboard artifacts).
+    """
+    target = 256
+    resized = cv2.resize(gray, (target, target))
+    f = np.fft.fft2(resized.astype(np.float32))
+    fshift = np.fft.fftshift(f)
+    mag = np.abs(fshift)
+
+    cy, cx = target // 2, target // 2
+    Y, X = np.ogrid[:target, :target]
+    r = np.sqrt((Y - cy)**2 + (X - cx)**2)
+
+    r = r.astype(np.int32)
+    # Bin the radii
+    tbin = np.bincount(r.ravel(), mag.ravel())
+    nr = np.bincount(r.ravel())
+    # Avoid zero division
+    nr[nr == 0] = 1
+    radial_profile = tbin / nr
+
+    # Mid frequency energy (r ≈ 20 to 60)
+    mid_freq = float(np.mean(radial_profile[20:60]))
+    # High frequency energy (r ≈ 80 to 120)
+    high_freq = float(np.mean(radial_profile[80:120]))
+
+    if mid_freq < 1e-6:
+        return False
+
+    ratio = high_freq / mid_freq
+    # Natural images usually decay cleanly (ratio < 0.25)
+    # Deepfakes often have a flat tail or bump (ratio > 0.30)
+    return ratio > _SPECTRAL_DECAY_MAX
+
+
+# ── Layer 9 helper: Anatomical Sanity Check ──────────────────────────────────
+
+def _anatomical_sanity_check(hand: HandDetectionResult) -> bool:
+    """
+    Verify the basic geometry of the hand to catch AI hallucinations.
+    Checks if the middle finger is an impossible length compared to the palm.
+    """
+    if not hand.raw_landmarks:
+        return True  # Cannot verify if landmarks weren't passed
+    
+    lm = hand.raw_landmarks
+    # Sanity 1: Palm Length (Wrist to Middle Finger Base)
+    # Wrist: landmark[0], Middle Base: landmark[9]
+    dx1 = lm.landmark[9].x - lm.landmark[0].x
+    dy1 = lm.landmark[9].y - lm.landmark[0].y
+    palm_len = np.sqrt(dx1**2 + dy1**2)
+
+    # Sanity 2: Middle Finger Length (Middle Base to Middle Tip)
+    # Middle Base: landmark[9], Middle Tip: landmark[12]
+    dx2 = lm.landmark[12].x - lm.landmark[9].x
+    dy2 = lm.landmark[12].y - lm.landmark[9].y
+    finger_len = np.sqrt(dx2**2 + dy2**2)
+
+    if palm_len < 1e-4:
+        return True # Fallback
+
+    # Standard human middle finger length is roughly 75%-110% of palm length
+    # Generative AI often makes it 200%+ (spider fingers) or 30% (fused fingers)
+    ratio = finger_len / palm_len
+    if ratio > 1.8 or ratio < 0.4:
+        return False
+
+    return True
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────

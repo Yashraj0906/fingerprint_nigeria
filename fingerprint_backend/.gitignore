@@ -40,3 +40,9 @@ logs/
 
 # Uvicorn / test output
 *.pid
+
+# Test assets
+*.jpg
+*.jpeg
+*.png
+*.txt

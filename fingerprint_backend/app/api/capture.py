@@ -162,6 +162,7 @@ def process_multi_capture(request: MultiCaptureRequest):
                 coverage_score=round(q.coverage_score, 2),
                 liveness_passed=True,
                 liveness_confidence=round(liveness.confidence, 3),
+                is_ai_generated=False,
                 template=None, enhanced_image_b64=enhanced_img_b64,
                 error_code="LOW_RIDGE_DETAIL",
                 error_message="Insufficient ridge detail",
@@ -178,6 +179,7 @@ def process_multi_capture(request: MultiCaptureRequest):
             coverage_score=round(q.coverage_score, 2),
             liveness_passed=True,
             liveness_confidence=round(liveness.confidence, 3),
+            is_ai_generated=False,
             template=template, enhanced_image_b64=enhanced_img_b64,
             error_code=None, error_message=None,
             guidance_message=None
@@ -242,6 +244,7 @@ def analyze_frame(request: AnalyzeRequest):
                 finger_id=finger_id, detected=False,
                 quality_score=0.0, blur_score=None, illum_score=None,
                 liveness=False, liveness_conf=None,
+                is_ai_generated=False,
                 guidance="Finger not visible", bbox_pct=None
             ))
             continue
@@ -275,6 +278,7 @@ def analyze_frame(request: AnalyzeRequest):
             illum_score=round(q.contrast_score, 2),
             liveness=liveness.passed,
             liveness_conf=round(liveness.confidence, 3),
+            is_ai_generated=liveness.is_ai_generated,
             guidance=finger_guidance,
             bbox_pct=bbox_pct
         ))
