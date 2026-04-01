@@ -1,0 +1,144 @@
+name: Build Fingerprint SDK
+
+on:
+  push:
+    branches: [main, image_enhancement1]
+    paths:
+      - 'fingerprint_backend_cpp/**'
+      - '.github/workflows/build-sdk.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — Android .aar  (Ubuntu runner)
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  build-android-aar:
+    name: Build Android AAR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 26 and CMake 3.22
+        run: |
+          sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> $GITHUB_ENV
+
+      - name: Download OpenCV 4.9.0 Android SDK
+        run: |
+          wget -q \
+            https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-android-sdk.zip \
+            -O /tmp/opencv-android.zip
+          unzip -q /tmp/opencv-android.zip -d $HOME/opencv-android
+          echo "OPENCV_ANDROID_SDK=$HOME/opencv-android/OpenCV-android-sdk" >> $GITHUB_ENV
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.6'
+
+      - name: Generate Gradle wrapper
+        working-directory: fingerprint_backend_cpp/android
+        run: gradle wrapper --gradle-version 8.6
+
+      - name: Build Release AAR
+        working-directory: fingerprint_backend_cpp/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fingerprint-sdk-android-aar
+          path: fingerprint_backend_cpp/android/build/outputs/aar/fingerprint_sdk-release.aar
+          retention-days: 30
+          if-no-files-found: error
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — iOS .xcframework  (macOS runner — Xcode 15, Apple Silicon)
+# ─────────────────────────────────────────────────────────────────────────────
+  build-ios-xcframework:
+    name: Build iOS XCFramework
+    runs-on: macos-14   # Apple Silicon, Xcode 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Download OpenCV 4.9.0 iOS Framework
+        run: |
+          wget -q \
+            https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-ios-framework.zip \
+            -O /tmp/opencv-ios.zip
+          unzip -q /tmp/opencv-ios.zip -d $HOME/opencv-ios
+          echo "OPENCV_FRAMEWORK_PATH=$HOME/opencv-ios" >> $GITHUB_ENV
+
+      - name: Generate Xcode project (XcodeGen)
+        working-directory: fingerprint_backend_cpp/ios
+        run: xcodegen generate
+
+      - name: Build — iOS Device (arm64)
+        working-directory: fingerprint_backend_cpp/ios
+        run: |
+          xcodebuild archive \
+            -scheme FingerprintSDK \
+            -destination "generic/platform=iOS" \
+            -archivePath ${{ runner.temp }}/ios.xcarchive \
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+            OPENCV_FRAMEWORK_PATH=$OPENCV_FRAMEWORK_PATH \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty
+
+      - name: Build — iOS Simulator (arm64 + x86_64)
+        working-directory: fingerprint_backend_cpp/ios
+        run: |
+          xcodebuild archive \
+            -scheme FingerprintSDK \
+            -destination "generic/platform=iOS Simulator" \
+            -archivePath ${{ runner.temp }}/ios-sim.xcarchive \
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+            OPENCV_FRAMEWORK_PATH=$OPENCV_FRAMEWORK_PATH \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty
+
+      - name: Create XCFramework (device + simulator slices)
+        run: |
+          xcodebuild -create-xcframework \
+            -framework ${{ runner.temp }}/ios.xcarchive/Products/Library/Frameworks/FingerprintSDK.framework \
+            -framework ${{ runner.temp }}/ios-sim.xcarchive/Products/Library/Frameworks/FingerprintSDK.framework \
+            -output ${{ runner.temp }}/FingerprintSDK.xcframework
+
+      - name: Zip XCFramework for upload
+        run: |
+          cd ${{ runner.temp }}
+          zip -r FingerprintSDK.xcframework.zip FingerprintSDK.xcframework
+
+      - name: Upload XCFramework artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fingerprint-sdk-ios-xcframework
+          path: ${{ runner.temp }}/FingerprintSDK.xcframework.zip
+          retention-days: 30
+          if-no-files-found: error
