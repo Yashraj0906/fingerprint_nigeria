@@ -42,12 +42,16 @@ jobs:
             https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-android-sdk.zip \
             -O /tmp/opencv-android.zip
           unzip -q /tmp/opencv-android.zip -d $HOME/opencv-android
-          # Dynamically locate OpenCV.cmake — handles any version-specific dir name
-          OPENCV_CMAKE=$(find $HOME/opencv-android -name "OpenCV.cmake" | head -1)
-          echo "Found OpenCV.cmake at: $OPENCV_CMAKE"
-          OPENCV_SDK=$(echo "$OPENCV_CMAKE" | sed 's|/sdk/native/jni/OpenCV.cmake||')
+
+          echo "=== Contents of $HOME/opencv-android ==="
+          ls -la $HOME/opencv-android/
+
+          # Use the first (and only) subdirectory — works regardless of version suffix
+          OPENCV_SDK=$(find "$HOME/opencv-android" -maxdepth 1 -mindepth 1 -type d | head -1)
+          echo "=== SDK root: $OPENCV_SDK ==="
+          echo "=== include dir exists: $([ -d $OPENCV_SDK/sdk/native/jni/include ] && echo YES || echo NO) ==="
+
           echo "OPENCV_ANDROID_SDK=$OPENCV_SDK" >> $GITHUB_ENV
-          echo "OpenCV SDK root: $OPENCV_SDK"
 
       - name: Setup Gradle 8.6
         uses: gradle/actions/setup-gradle@v3
@@ -86,9 +90,14 @@ jobs:
             https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-ios-framework.zip \
             -O /tmp/opencv-ios.zip
           unzip -q /tmp/opencv-ios.zip -d $HOME/opencv-ios
-          # Dynamically locate opencv2.framework
-          OPENCV_FW_DIR=$(find $HOME/opencv-ios -name "opencv2.framework" -type d | head -1 | xargs dirname)
-          echo "Found opencv2.framework in: $OPENCV_FW_DIR"
+
+          echo "=== Contents of $HOME/opencv-ios ==="
+          ls -la $HOME/opencv-ios/
+
+          # Locate the directory that contains opencv2.framework
+          OPENCV_FW_DIR=$(find "$HOME/opencv-ios" -name "opencv2.framework" -type d | head -1 | xargs dirname)
+          echo "=== OPENCV_FRAMEWORK_PATH: $OPENCV_FW_DIR ==="
+
           echo "OPENCV_FRAMEWORK_PATH=$OPENCV_FW_DIR" >> $GITHUB_ENV
 
       - name: Generate Xcode project (XcodeGen)
@@ -97,8 +106,6 @@ jobs:
 
       - name: Build — iOS Device (arm64)
         working-directory: fingerprint_backend_cpp/ios
-        # No xcpretty pipe — bash pipes return last command's exit code, which
-        # would be xcpretty's (always 0), hiding xcodebuild failures.
         run: |
           xcodebuild archive \
             -scheme FingerprintSDK \

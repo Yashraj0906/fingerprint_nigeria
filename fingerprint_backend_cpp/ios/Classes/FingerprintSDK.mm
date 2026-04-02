@@ -1,6 +1,30 @@
-// FingerprintSDK.mm — Objective-C++ bridge to the C++ core
-#import "FingerprintSDK.h"
-#include "fingerprint_core.h"
+// FingerprintSDK.mm — Objective-C++ bridge to the fingerprint C++ core
+//
+// MACRO COLLISION FIX
+// -------------------
+// OpenCV headers contain C++ identifiers (e.g. enum values named 'NO', 'YES',
+// 'nil') that clash with Objective-C runtime macros on Apple platforms.
+// We use push_macro/pop_macro to temporarily undefine those macros while the
+// C++ headers are included, then restore them for the ObjC bridge code below.
+#import "FingerprintSDK.h"   // pulls in Foundation → defines YES, NO, nil, Nil
+
+#pragma push_macro("NO")
+#pragma push_macro("YES")
+#pragma push_macro("nil")
+#pragma push_macro("Nil")
+#undef NO
+#undef YES
+#undef nil
+#undef Nil
+
+#include "fingerprint_core.h"   // OpenCV-dependent C++ core
+
+#pragma pop_macro("NO")
+#pragma pop_macro("YES")
+#pragma pop_macro("nil")
+#pragma pop_macro("Nil")
+
+// ---------------------------------------------------------------------------
 
 @implementation FingerprintCaptureResult
 @end
