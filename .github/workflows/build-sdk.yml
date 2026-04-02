@@ -118,29 +118,16 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Debug — list device archive contents
-        if: always()
-        run: find ${{ runner.temp }}/ios.xcarchive -type f 2>/dev/null | head -40 || echo "Archive not found"
+      # opencv-4.9.0-ios-framework.zip ships the device (iOS arm64) slice ONLY.
+      # There is no simulator slice — linking a simulator binary against a device
+      # OpenCV causes "built for 'iOS' but linking for 'iOS-simulator'" error.
+      # We ship a device-only XCFramework which is valid for production distribution.
+      # Simulator support requires building OpenCV from source; out of scope for CI.
 
-      - name: Build — iOS Simulator (arm64 + x86_64)
-        working-directory: fingerprint_backend_cpp/ios
-        run: |
-          xcodebuild archive \
-            -scheme FingerprintSDK \
-            -destination "generic/platform=iOS Simulator" \
-            -archivePath ${{ runner.temp }}/ios-sim.xcarchive \
-            SKIP_INSTALL=NO \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            OPENCV_FRAMEWORK_PATH=$OPENCV_FRAMEWORK_PATH \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Create XCFramework
+      - name: Create XCFramework (device-only)
         run: |
           xcodebuild -create-xcframework \
             -framework ${{ runner.temp }}/ios.xcarchive/Products/Library/Frameworks/FingerprintSDK.framework \
-            -framework ${{ runner.temp }}/ios-sim.xcarchive/Products/Library/Frameworks/FingerprintSDK.framework \
             -output ${{ runner.temp }}/FingerprintSDK.xcframework
 
       - name: Zip XCFramework for upload
