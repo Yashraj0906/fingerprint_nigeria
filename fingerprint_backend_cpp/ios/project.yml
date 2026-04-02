@@ -60,6 +60,18 @@ targets:
         OTHER_LDFLAGS:
           - "-framework opencv2"
 
+        # OpenCV 4.9+ iOS framework only ships arm64 slices (device + arm64-simulator).
+        # x86_64 simulator was dropped. Building both slices causes link failure.
+        ARCHS: arm64
+        VALID_ARCHS: arm64
+
+        # OpenCV internal headers use "..." includes; suppress this from being an error
+        # in framework module builds.
+        CLANG_WARN_NON_MODULAR_INCLUDE_IN_FRAMEWORK: NO
+        OTHER_CFLAGS:
+          - "-Wno-non-modular-include-in-framework-module"
+          - "-Wno-quoted-include-in-framework-header"
+
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
