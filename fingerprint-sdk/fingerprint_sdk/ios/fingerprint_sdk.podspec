@@ -6,7 +6,7 @@ Pod::Spec.new do |s|
   s.license          = { :type => 'Proprietary' }
   s.author           = { 'YellowSense' => 'dev@yellowsense.in' }
   s.source           = { :path => '.' }
-  s.source_files        = 'Classes/**/*.{h,m,mm,swift}', '../../../../fingerprint_backend_cpp/src/*.cpp', '../../../../fingerprint_backend_cpp/include/*.h'
+  s.source_files        = 'Classes/**/*.{h,m,mm,swift}', '../../../fingerprint_backend_cpp/src/*.cpp', '../../../fingerprint_backend_cpp/include/*.h'
   s.public_header_files = 'Classes/Bridging/OpenCVWrapper.h', 'Classes/Bridge/FingerprintCoreWrapper.h'
   s.dependency 'Flutter'
   s.dependency 'OpenCV2'
@@ -20,4 +20,4 @@ Pod::Spec.new do |s|
     'CLANG_CXX_LANGUAGE_STANDARD'                           => 'c++17',
     'CLANG_CXX_LIBRARY'                                     => 'libc++'
   }
-}
+end

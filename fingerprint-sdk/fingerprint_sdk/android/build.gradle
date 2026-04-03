@@ -22,7 +22,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path "CMakeLists.txt"
+            path "../../../fingerprint_backend_cpp/CMakeLists.txt"
             version "3.22.1"
         }
     }
