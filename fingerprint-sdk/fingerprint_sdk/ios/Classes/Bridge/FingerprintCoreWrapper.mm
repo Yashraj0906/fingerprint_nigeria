@@ -5,9 +5,9 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
-#import "liveness_detector.h"
-#import "quality_analyzer.h"
-#import "template_encoder.h"
+#include "liveness_detector.h"
+#include "quality_analyzer.h"
+#include "template_encoder.h"
 
 using namespace fingerprint;
 
