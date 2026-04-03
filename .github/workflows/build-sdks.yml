@@ -92,29 +92,12 @@ jobs:
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
           echo "Found AAR: $AAR"
 
-          # AGP forbids local .aar dependencies in library projects. Publish to
-          # Maven Local so fingerprint_sdk can resolve org.opencv:opencv:4.8.0.
-          MVNLOC="$HOME/.m2/repository/org/opencv/opencv/4.8.0"
-          mkdir -p "$MVNLOC"
-          cp "$AAR" "$MVNLOC/opencv-4.8.0.aar"
-          cat > "$MVNLOC/opencv-4.8.0.pom" << 'MAVENPOM'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <project>
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>org.opencv</groupId>
-            <artifactId>opencv</artifactId>
-            <version>4.8.0</version>
-            <packaging>aar</packaging>
-          </project>
-          MAVENPOM
-
-          # Flutter 3.16+ uses dependencyResolutionManagement in settings.gradle
-          # and forbids injecting repositories via allprojects. We must patch settings.gradle(.kts).
-          # NOTE: we are currently in /tmp/opencv-build, so use $GITHUB_WORKSPACE
-          sed -i 's/mavenCentral()/mavenCentral()\n        mavenLocal()/g' $GITHUB_WORKSPACE/fingerprint-sdk/example/android/settings.gradle || true
-          sed -i 's/mavenCentral()/mavenCentral()\n        mavenLocal()/g' $GITHUB_WORKSPACE/fingerprint-sdk/example/android/settings.gradle.kts || true
-
-          echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
+          # Copy OpenCV AAR directly into the fingerprint_sdk libs/ directory.
+          # build.gradle uses fileTree(dir:'libs') so no Maven setup needed at all.
+          LIBS_DIR="$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs"
+          mkdir -p "$LIBS_DIR"
+          cp "$AAR" "$LIBS_DIR/opencv-4.8.0.aar"
+          echo "OpenCV AAR copied to: $LIBS_DIR/opencv-4.8.0.aar"
 
       - name: Build fingerprint_sdk release AAR (via example app Gradle)
         working-directory: fingerprint-sdk/example/android
