@@ -108,14 +108,9 @@ jobs:
           </project>
           MAVENPOM
 
-          # Gradle init script: add mavenLocal() to ALL project repositories so
-          # the fingerprint_sdk subproject (built via example app) finds OpenCV.
-          mkdir -p "$HOME/.gradle"
-          cat > "$HOME/.gradle/init.gradle" << 'INITSCRIPT'
-          allprojects {
-            repositories { mavenLocal() }
-          }
-          INITSCRIPT
+          # Flutter 3.16+ uses dependencyResolutionManagement in settings.gradle
+          # and forbids injecting repositories via allprojects. We must patch settings.gradle.
+          sed -i 's/mavenCentral()/mavenCentral()\n        mavenLocal()/g' ../example/android/settings.gradle
 
           echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
