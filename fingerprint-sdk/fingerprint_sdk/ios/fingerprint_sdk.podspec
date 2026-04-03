@@ -17,7 +17,8 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'DEFINES_MODULE'                                        => 'YES',
     'CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES' => 'YES',
-    'HEADER_SEARCH_PATHS'                                   => '"$(PODS_TARGET_SRCROOT)/Classes/Core/include"',
+    'FRAMEWORK_SEARCH_PATHS'                                => '$(inherited) "${PODS_ROOT}/OpenCV2"',
+    'HEADER_SEARCH_PATHS'                                   => '$(inherited) "${PODS_ROOT}/OpenCV2/opencv2.framework/Headers" "$(PODS_TARGET_SRCROOT)/Classes/Core/include"',
     'CLANG_CXX_LANGUAGE_STANDARD'                           => 'c++17',
     'CLANG_CXX_LIBRARY'                                     => 'libc++'
   }
