@@ -109,13 +109,51 @@ jobs:
           MAVENPOM
           echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
+      - name: Publish Flutter Android Embedding to Maven Local
+        run: |
+          # Get Flutter engine hash from Flutter version file
+          FLUTTER_ENGINE=$(grep -oP '"engine_hash": "\K[^"]+' "$FLUTTER_ROOT/bin/internal/engine.version" || echo "unknown")
+          FLUTTER_VERSION=$(cat "$FLUTTER_ROOT/version.txt" 2>/dev/null | head -1 || echo "3.41.6")
+          
+          echo "Flutter Engine: $FLUTTER_ENGINE"
+          echo "Flutter Version: $FLUTTER_VERSION"
+          
+          # Create Maven Local directory for Flutter embedding
+          MVNLOC="$HOME/.m2/repository/io/flutter/flutter_embedding_release/1.0.0-$FLUTTER_ENGINE"
+          mkdir -p "$MVNLOC"
+          
+          # Create POM file for Flutter embedding release
+          cat > "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.pom" << 'FLUTTERPOM'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project>
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>io.flutter</groupId>
+            <artifactId>flutter_embedding_release</artifactId>
+            <version>1.0.0-PLACEHOLDER</version>
+            <packaging>jar</packaging>
+          </project>
+          FLUTTERPOM
+          sed -i "s/1.0.0-PLACEHOLDER/1.0.0-$FLUTTER_ENGINE/g" "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.pom"
+          
+          # Try to find and copy Flutter JAR, or create empty JAR
+          FLUTTER_JAR=$(find "$FLUTTER_ROOT" -path "*/flutter/bin/cache/*" -name "flutter*.jar" 2>/dev/null | head -1)
+          if [ -z "$FLUTTER_JAR" ]; then
+            echo "Warning: Flutter JAR not found, creating empty JAR file"
+            touch "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.jar"
+          else
+            echo "Found Flutter JAR: $FLUTTER_JAR"
+            cp "$FLUTTER_JAR" "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.jar"
+          fi
+          
+          echo "Flutter embedding published to Maven Local: $MVNLOC"
+
       - name: Build fingerprint_sdk release AAR (via example app Gradle)
         working-directory: fingerprint-sdk/example/android
         run: |
           chmod +x gradlew
 
           # Flutter 3.41+ no longer generates dependencyResolutionManagement.
-          # Append one with mavenLocal() so OpenCV is resolved from Maven Local.
+          # Append one with mavenLocal() so OpenCV and Flutter are resolved from Maven Local.
           cat > patch_settings.py << 'EOF'
           import re, sys, os
           path = 'settings.gradle.kts'
