@@ -97,72 +97,54 @@ jobs:
           MAVENPOM
           echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
-      - name: Download Flutter Android Embedding from Google Maven
-        run: |
-          # Get Flutter version
-          FLUTTER_VERSION=$(cat "$FLUTTER_ROOT/version.txt" 2>/dev/null | head -1)
-          echo "Flutter Version: $FLUTTER_VERSION"
-          
-          # Create Maven Local directory
-          MVNLOC="$HOME/.m2/repository/io/flutter"
-          mkdir -p "$MVNLOC"
-          
-          # Download directly from Google Maven Repository
-          FLUTTER_ENGINE="425cfb54d01a9472b3e81d9e76fd63a4a44cfbcb"
-          VERSION="1.0.0-$FLUTTER_ENGINE"
-          
-          DEST_DIR="$MVNLOC/flutter_embedding_release/$VERSION"
-          mkdir -p "$DEST_DIR"
-          
-          # Download POM
-          wget -q -O "$DEST_DIR/flutter_embedding_release-$VERSION.pom" \
-            "https://dl.google.com/dl/android/maven2/io/flutter/flutter_embedding_release/$VERSION/flutter_embedding_release-$VERSION.pom" || \
-          curl -o "$DEST_DIR/flutter_embedding_release-$VERSION.pom" \
-            "https://dl.google.com/dl/android/maven2/io/flutter/flutter_embedding_release/$VERSION/flutter_embedding_release-$VERSION.pom" || \
-          cat > "$DEST_DIR/flutter_embedding_release-$VERSION.pom" << 'FLUTTERPOM'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <project>
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>io.flutter</groupId>
-            <artifactId>flutter_embedding_release</artifactId>
-            <version>PLACEHOLDER</version>
-            <packaging>jar</packaging>
-          </project>
-          FLUTTERPOM
-          sed -i "s/PLACEHOLDER/$VERSION/g" "$DEST_DIR/flutter_embedding_release-$VERSION.pom"
-          
-          # Create empty JAR (Gradle will use Maven Central)
-          touch "$DEST_DIR/flutter_embedding_release-$VERSION.jar"
-          
-          echo "Flutter embedding prepared in Maven Local: $DEST_DIR"
-
       - name: Build fingerprint_sdk release AAR (via example app Gradle)
         working-directory: fingerprint-sdk/example/android
         run: |
           chmod +x gradlew
 
+          # CRITICAL FIX: Patch settings.gradle.kts to ensure google() repo is FIRST
           cat > patch_settings.py << 'EOF'
           import re, sys, os
           path = 'settings.gradle.kts'
           if not os.path.exists(path):
               print('No settings.gradle.kts found, skipping'); sys.exit(0)
+          
           txt = open(path).read()
+          
+          # Change repository mode
           txt = txt.replace('RepositoriesMode.FAIL_ON_PROJECT_REPOS', 'RepositoriesMode.PREFER_SETTINGS')
           
-          # Add mavenLocal() to pluginManagement
+          # Fix pluginManagement - add google() BEFORE mavenLocal()
           if 'pluginManagement' in txt:
-              txt = re.sub(r'(pluginManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
+              txt = re.sub(
+                  r'(pluginManagement\s*\{[^}]*?repositories\s*\{)',
+                  r'\1\n        google()\n        mavenLocal()',
+                  txt,
+                  count=1,
+                  flags=re.DOTALL
+              )
           
-          # Add mavenLocal() to dependencyResolutionManagement
+          # Fix dependencyResolutionManagement - add BOTH google() and mavenLocal()
           if 'dependencyResolutionManagement' in txt:
-              txt = re.sub(r'(dependencyResolutionManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
+              txt = re.sub(
+                  r'(dependencyResolutionManagement\s*\{[^}]*?repositories\s*\{)',
+                  r'\1\n        google()\n        mavenLocal()\n        mavenCentral()',
+                  txt,
+                  count=1,
+                  flags=re.DOTALL
+              )
           else:
-              txt += '\ndependencyResolutionManagement {\n    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\n    repositories {\n        mavenLocal()\n        google()\n        mavenCentral()\n    }\n}\n'
+              # Add complete block if missing
+              txt = txt.rstrip() + '\n\ndependencyResolutionManagement {\n    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\n    repositories {\n        google()\n        mavenLocal()\n        mavenCentral()\n    }\n}\n'
+          
           open(path, 'w').write(txt)
-          print('=== Patched settings.gradle.kts ==='); print(txt)
+          print('=== Patched settings.gradle.kts ===')
+          print(txt)
           EOF
-          sed -i 's/^          //' patch_settings.py
+          
           python3 patch_settings.py
+          
+          # Build with explicit flags
           ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
 
       - name: Upload AAR artifact
@@ -246,18 +228,10 @@ jobs:
       - name: Locate frameworks and create XCFramework
         working-directory: fingerprint-sdk/example/ios
         run: |
-          echo "=== Device archive frameworks ==="
-          find "$PWD/build/ios-device.xcarchive" -name "*.framework" | head -20
-          echo "=== Simulator archive frameworks ==="
-          find "$PWD/build/ios-simulator.xcarchive" -name "*.framework" | head -20
-
           DEVICE_FW=$(find "$PWD/build/ios-device.xcarchive" \
             -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
           SIM_FW=$(find "$PWD/build/ios-simulator.xcarchive" \
             -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
-
-          echo "Device framework: $DEVICE_FW"
-          echo "Simulator framework: $SIM_FW"
 
           xcodebuild -create-xcframework \
             -framework "$DEVICE_FW" \
