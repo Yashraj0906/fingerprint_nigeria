@@ -209,8 +209,8 @@ final class CaptureEngine {
                 continue
             }
 
-            // Liveness check
-            let live = config.performLiveness ? liveness.evaluate(enhanced) : nil
+            // Liveness check (12-layer C++ Engine)
+            let live = config.performLiveness ? liveness.evaluate(enhanced, bgr: cropped, fullBgr: cgImage, handMode: fingerId) : nil
             if debugMode { os_log("[%{public}s] liveness=%{public}s",
                                    log: log, type: .debug, fingerId,
                                    live?.passed == true ? "PASS" : live?.reason ?? "FAIL") }
@@ -267,8 +267,7 @@ final class CaptureEngine {
             status:         "success"
         )
         if config.returnTemplate {
-            capture.template = TemplateEncoder.encode(skeleton: best.ridges,
-                                                       fingerPosition: isoFingerPosition(fingerId))
+            capture.template = TemplateEncoder.encode(image: best.enhanced)
         }
         if config.returnProcessed { capture.processedImage = ImageProcessor.cgImageToBase64(best.enhanced) }
         if config.returnRaw, let raw = best.raw { capture.rawImage = ImageProcessor.cgImageToBase64(raw) }

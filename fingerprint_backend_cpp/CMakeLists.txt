@@ -4,7 +4,7 @@ project(fingerprint_core VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
+find_package(JNI REQUIRED)
 
 set(CORE_SOURCES
     src/image_processor.cpp
@@ -13,6 +13,7 @@ set(CORE_SOURCES
     src/template_encoder.cpp
     src/matcher.cpp
     src/fingerprint_core.cpp
+    src/fingerprint_jni.cpp
 )
 
 add_library(fingerprint_core SHARED ${CORE_SOURCES})

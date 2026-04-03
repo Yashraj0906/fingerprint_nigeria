@@ -31,80 +31,21 @@ class LivenessDetector {
     private var motionVectors     = mutableListOf<Pair<Double, Double>>()  // (dx, dy) per frame pair
 
     companion object {
-        private const val MAX_FRAMES             = 6
-        private const val MIN_FRAMES_REQUIRED    = 3
-        private const val LBP_VARIANCE_MIN       = 600.0
-        private const val SPECULAR_RATIO_MAX     = 0.12
-        private const val SPECULAR_VARIANCE_MAX  = 0.02   // screens have consistent specular
-        private const val MIN_MOTION             = 0.05
-        private const val MAX_MOTION             = 10.0
-        private const val FREQ_ENERGY_MIN        = 0.04
-        private const val EDGE_SHARPNESS_MAX     = 0.92   // flat prints have unnaturally sharp edges
-        private const val CHALLENGE_FRAMES       = 4      // frames needed for challenge validation
-        private const val MOTION_CONSISTENCY_MIN = 0.60   // 60% of motion vectors must be coherent
+        init {
+            System.loadLibrary("fingerprint_core")
+        }
     }
 
-    fun evaluate(gray: Mat): LivenessResult {
-        val clone = gray.clone()
-        if (frameHistory.size >= MAX_FRAMES) frameHistory.removeFirst().release()
-        frameHistory.addLast(clone)
+    private external fun nativeEvaluate(grayAddr: Long, bgrAddr: Long, fullBgrAddr: Long, handMode: String): Map<String, Any>
 
-        if (frameHistory.size < MIN_FRAMES_REQUIRED) {
-            return LivenessResult(true, null, 0.5)
-        }
-
-        // Layer 1: Texture variance
-        val lbpVar = lbpVariance(gray)
-        if (lbpVar < LBP_VARIANCE_MIN) {
-            return LivenessResult(false, "Printed or flat image detected", 0.95)
-        }
-
-        // Layer 2: Specular reflection ratio
-        val specRatio = specularRatio(gray)
-        if (specRatio > SPECULAR_RATIO_MAX) {
-            return LivenessResult(false, "Screen replay or glare detected", 0.90)
-        }
-
-        // Layer 5: Reflection consistency across frames (screens are uniform)
-        specularHistory.addLast(specRatio)
-        if (specularHistory.size > MAX_FRAMES) specularHistory.removeFirst()
-        if (specularHistory.size >= 3) {
-            val specVariance = variance(specularHistory.toList())
-            if (specVariance < SPECULAR_VARIANCE_MAX && specRatio > 0.03) {
-                return LivenessResult(false, "Uniform reflection pattern — possible screen replay", 0.88)
-            }
-        }
-
-        // Layer 3: Micro-movement
-        val motion = averageMotion()
-        when {
-            motion < MIN_MOTION -> return LivenessResult(false, "No micro-movement — possible spoof", 0.92)
-            motion > MAX_MOTION -> return LivenessResult(false, "Excessive movement — hold steady", 0.80)
-        }
-
-        // Layer 4: DFT high-frequency energy
-        val freqEnergy = highFrequencyEnergy(gray)
-        if (freqEnergy < FREQ_ENERGY_MIN) {
-            return LivenessResult(false, "Low ridge frequency — possible printed image", 0.85)
-        }
-
-        // Layer 6: Edge distortion (flat prints have unnaturally uniform edge sharpness)
-        val edgeUniformity = edgeSharpnessUniformity(gray)
-        if (edgeUniformity > EDGE_SHARPNESS_MAX) {
-            return LivenessResult(false, "Unnaturally uniform edges — possible flat print", 0.82)
-        }
-
-        // Layer 7: Challenge-response motion consistency
-        if (frameHistory.size >= CHALLENGE_FRAMES) {
-            val consistent = checkMotionConsistency()
-            if (!consistent) {
-                return LivenessResult(false, "Inconsistent motion pattern — possible replay attack", 0.78)
-            }
-        }
-
-        // Compute composite confidence
-        val confidence = computeConfidence(lbpVar, specRatio, motion, freqEnergy, edgeUniformity)
-        return LivenessResult(true, null, confidence)
+    fun evaluate(gray: Mat, bgr: Mat, fullBgr: Mat, handMode: String = "SINGLE_FINGER"): LivenessResult {
+        val res = nativeEvaluate(gray.nativeObjAddr, bgr.nativeObjAddr, fullBgr.nativeObjAddr, handMode)
+        
+        return LivenessResult(
+            passed     = res["passed"] as? Boolean ?: false,
+            reason     = res["reason"] as? String,
+            confidence = (res["confidence"] as? Float)?.toDouble() ?: 0.0
+        )
     }
 
     fun reset() {

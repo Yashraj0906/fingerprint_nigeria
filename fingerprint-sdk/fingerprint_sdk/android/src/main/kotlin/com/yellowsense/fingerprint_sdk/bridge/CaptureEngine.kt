@@ -274,8 +274,19 @@ class CaptureEngine(
                         continue
                     }
 
-                    // ── Liveness check ──
-                    val liveness = if (performLiveness) livenessDetector.evaluate(enhanced) else null
+                    // ── Liveness check (12-layer C++ Engine) ──
+                    val liveness = if (performLiveness) {
+                        val bgrRoi = Mat(bgr, roi.rect)
+                        val res = livenessDetector.evaluate(
+                            gray = roiMat,
+                            bgr = bgrRoi,
+                            fullBgr = bgr,
+                            handMode = fingerId
+                        )
+                        bgrRoi.release()
+                        res
+                    } else null
+
                     if (debugMode) Log.d(TAG, "[$fingerId] liveness=${liveness?.passed} conf=${liveness?.confidence}")
 
                     if (liveness != null && !liveness.passed) {
@@ -358,7 +369,7 @@ class CaptureEngine(
 
         var template: String? = null
         if (returnTemplate) {
-            template = TemplateEncoder.encode(best.ridges, isoFingerPosition(fingerId), best.qualityScore)
+            template = TemplateEncoder.encode(best.enhanced)
             if (template == null) {
                 // Insufficient minutiae — mark as low quality
                 fingerResults[fingerId] = FingerCapture(

@@ -28,34 +28,34 @@ object QualityAnalyzer {
 
     enum class Verdict { ACCEPT, RETRY, REJECT }
 
-    private var prevFrame: Mat? = null
-
-    /**
-     * @param gray  Single-channel 8-bit Mat of the finger ROI.
-     * @param fullFrameGray  Full-frame gray for coverage estimation (optional).
-     */
-    fun analyze(gray: Mat, fullFrameGray: Mat? = null): QualityResult {
-        val blur     = blurScore(gray)
-        val contrast = contrastScore(gray)
-        val ridges   = ridgeClarityScore(gray)
-        val coverage = coverageScore(gray, fullFrameGray)
-        val motion   = motionStabilityScore(gray)
-
-        val composite = (blur * 0.25 + contrast * 0.20 + ridges * 0.25 +
-                         coverage * 0.20 + motion * 0.10).coerceIn(0.0, 100.0)
-
-        val verdict = when {
-            composite > 70 -> Verdict.ACCEPT
-            composite >= 40 -> Verdict.RETRY
-            else -> Verdict.REJECT
+    companion object {
+        init {
+            System.loadLibrary("fingerprint_core")
         }
+    }
 
-        return QualityResult(composite, blur, contrast, ridges, coverage, motion, verdict)
+    private external fun nativeAnalyze(imageAddr: Long): Map<String, Any>
+
+    fun analyze(image: Mat, fullGray: Mat? = null): QualityResult {
+        val res = nativeAnalyze(image.nativeObjAddr)
+        
+        return QualityResult(
+            score = (res["compositeScore"] as? Float)?.toDouble() ?: 0.0,
+            blurScore = (res["blurScore"] as? Float)?.toDouble() ?: 0.0,
+            contrastScore = (res["contrastScore"] as? Float)?.toDouble() ?: 0.0,
+            ridgeScore = (res["ridgeClarityScore"] as? Float)?.toDouble() ?: 0.0,
+            coverageScore = (res["coverageScore"] as? Float)?.toDouble() ?: 0.0,
+            motionScore = (res["orientationScore"] as? Float)?.toDouble() ?: 0.0,
+            verdict = when (res["decision"] as? String) {
+                "ACCEPT" -> Verdict.ACCEPT
+                "RETRY"  -> Verdict.RETRY
+                else     -> Verdict.REJECT
+            }
+        )
     }
 
     fun resetMotionBaseline() {
-        prevFrame?.release()
-        prevFrame = null
+        // No-op for native implementation
     }
 
     // ─── Individual Metrics ───────────────────────────────────────────────────
