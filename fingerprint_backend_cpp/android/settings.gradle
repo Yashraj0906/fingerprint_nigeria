@@ -1,0 +1,21 @@
+pluginManagement {
+    plugins {
+        // Declare AGP version here so build.gradle can omit it
+        id 'com.android.library' version '8.3.2'
+    }
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "fingerprint_sdk"

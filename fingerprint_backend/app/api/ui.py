@@ -332,13 +332,14 @@ const FINGER_LABEL = {INDEX:'Index',MIDDLE:'Middle',RING:'Ring',LITTLE:'Little'}
 // State
 // ─────────────────────────────────────────────────────────────────────────────
 let videoEl, overlayCanvas, overlayCtx, scratchCanvas, scratchCtx;
-let stream       = null;
-let running      = false;
-let txnId        = null;
-let streak       = {};
-let capturedData = {};
-let enrollBuffer = {};
-let analyzing    = false;
+let stream        = null;
+let imageCapture  = null;   // ImageCapture API for high-res stills
+let running       = false;
+let txnId         = null;
+let streak        = {};
+let capturedData  = {};
+let enrollBuffer  = {};
+let analyzing     = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Init
@@ -378,16 +379,44 @@ async function newSession() {
 async function startCamera() {
   try {
     if (stream) stream.getTracks().forEach(t => t.stop());
+
+    // Request highest available resolution — no facingMode constraint so the
+    // browser picks the best camera (front webcam on laptops, rear on phones)
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720} }
+      video: {
+        width:     { ideal: 1920 },
+        height:    { ideal: 1080 },
+        frameRate: { ideal: 30 }
+      }
     });
+
+    // Apply continuous focus / exposure / white-balance if the camera supports it
+    const track = stream.getVideoTracks()[0];
+    if (track) {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      const adv  = {};
+      if (caps.focusMode        && caps.focusMode.includes('continuous'))        adv.focusMode        = 'continuous';
+      if (caps.exposureMode     && caps.exposureMode.includes('continuous'))     adv.exposureMode     = 'continuous';
+      if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) adv.whiteBalanceMode = 'continuous';
+      if (Object.keys(adv).length) {
+        try { await track.applyConstraints({ advanced: [adv] }); } catch(_) {}
+      }
+      // ImageCapture gives full-sensor-resolution stills instead of compressed video frames
+      if (typeof ImageCapture !== 'undefined') {
+        imageCapture = new ImageCapture(track);
+      }
+    }
+
     videoEl.srcObject = stream;
     await new Promise(r => videoEl.addEventListener('loadedmetadata', r, {once:true}));
     videoEl.play();
     resizeCanvas();
-    setGuide('Camera ready — click Start Live Detection', 'warn');
+
+    const settings = track ? track.getSettings() : {};
+    const resLabel = settings.width ? `${settings.width}×${settings.height}` : 'unknown';
+    setGuide(`Camera ready (${resLabel}) — click Start Live Detection`, 'warn');
   } catch(e) {
-    setGuide('Camera access denied', 'err');
+    setGuide('Camera access denied — ' + e.message, 'err');
   }
 }
 
@@ -447,13 +476,30 @@ function isFingerExtended(lms, ids) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Backend-driven detection loop
 // ─────────────────────────────────────────────────────────────────────────────
+// Fast frame grab for the ~3fps analysis loop (video frame, moderate quality)
 function grabBase64() {
   const vW = videoEl.videoWidth  || 640;
   const vH = videoEl.videoHeight || 480;
   scratchCanvas.width  = vW;
   scratchCanvas.height = vH;
   scratchCtx.drawImage(videoEl, 0, 0, vW, vH);
-  return scratchCanvas.toDataURL('image/jpeg', 0.82).split(',')[1];
+  return scratchCanvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+}
+
+// High-res still grab for actual finger capture using ImageCapture API.
+// Falls back to video frame if ImageCapture is unavailable.
+async function grabHighResBase64() {
+  if (imageCapture) {
+    try {
+      const bitmap = await imageCapture.grabFrame();
+      scratchCanvas.width  = bitmap.width;
+      scratchCanvas.height = bitmap.height;
+      scratchCtx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      return scratchCanvas.toDataURL('image/jpeg', 0.96).split(',')[1];
+    } catch(_) { /* fall through to video frame */ }
+  }
+  return grabBase64();
 }
 
 async function analyzeLoop() {
@@ -524,10 +570,12 @@ function onAnalyzeResult(data) {
     if (q >= CAPTURE_QUAL) {
       streak[key] = (streak[key] || 0) + 1;
       if (streak[key] >= HOLD_FRAMES) {
-        // Lock — grab crop from scratch canvas
-        const dataURL = f.bbox_pct ? cropFromBboxPct(f.bbox_pct) : scratchCanvas.toDataURL('image/jpeg', 0.92);
-        capturedData[key] = { imageDataURL: dataURL, ...metrics, timestamp: Date.now() };
-        updateTileCaptured(key, metrics, dataURL);
+        // Lock — grab high-res still using ImageCapture API, then crop
+        grabHighResBase64().then(() => {
+          const dataURL = f.bbox_pct ? cropFromBboxPct(f.bbox_pct) : scratchCanvas.toDataURL('image/jpeg', 0.96);
+          capturedData[key] = { imageDataURL: dataURL, ...metrics, timestamp: Date.now() };
+          updateTileCaptured(key, metrics, dataURL);
+        });
         if (f.bbox_pct) drawBboxPct(f.bbox_pct, '#2ecc71', 'CAPTURED ' + key, q, true);
         if (Object.keys(capturedData).length >= 4) setTimeout(onAllCaptured, 100);
       } else {
@@ -1020,8 +1068,8 @@ async function sendToBackend() {
   // Grab current full frame and send to /api/capture/multi for template encoding
   if (!Object.keys(capturedData).length) return;
 
-  // Build a composite image: use the scratch canvas (last drawn frame)
-  const b64 = scratchCanvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+  // Use high-res still from ImageCapture for best template quality
+  const b64 = await grabHighResBase64();
   try {
     const res  = await fetch(BASE + '/api/capture/multi', {
       method:'POST', headers:{'Content-Type':'application/json'},
