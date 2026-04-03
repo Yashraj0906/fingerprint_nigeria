@@ -105,8 +105,8 @@ jobs:
             -Dversion=4.8.0 \
             -Dpackaging=aar
 
-          # Export include path so CMake can find OpenCV headers during native build
-          echo "OPENCV_INCLUDE_DIR=$GITHUB_WORKSPACE/OpenCV-android-sdk/sdk/native/jni/include" >> $GITHUB_ENV
+          # Export OpenCV_DIR so CMake can find OpenCVConfig.cmake during native build
+          echo "OpenCV_DIR=$GITHUB_WORKSPACE/OpenCV-android-sdk/sdk/native/jni" >> $GITHUB_ENV
           
       - name: Build fingerprint_sdk AAR
         working-directory: fingerprint-sdk/example/android

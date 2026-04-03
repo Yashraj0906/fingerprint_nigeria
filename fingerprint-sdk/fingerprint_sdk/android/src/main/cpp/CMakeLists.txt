@@ -21,24 +21,14 @@ target_include_directories(fingerprint_core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# OpenCV: CI passes -DOPENCV_INCLUDE_DIR=<path/to/sdk/native/jni/include>
-# Local builds can use find_package if OpenCV is installed.
-if(DEFINED OPENCV_INCLUDE_DIR AND NOT OPENCV_INCLUDE_DIR STREQUAL "")
-    message(STATUS "Using OpenCV headers from: ${OPENCV_INCLUDE_DIR}")
-    target_include_directories(fingerprint_core PRIVATE ${OPENCV_INCLUDE_DIR})
-else()
-    # Fallback for local development
-    find_package(OpenCV QUIET)
-    if(OpenCV_FOUND)
-        target_include_directories(fingerprint_core PRIVATE ${OpenCV_INCLUDE_DIRS})
-        message(STATUS "Found local OpenCV: ${OpenCV_INCLUDE_DIRS}")
-    else()
-        message(WARNING "OpenCV not found. Build may fail if OpenCV headers are required.")
-    endif()
-endif()
+# Try to find OpenCV (works on CI since we passed OpenCV_DIR to CMake, and locally if installed)
+find_package(OpenCV REQUIRED)
+message(STATUS "Found OpenCV version: ${OpenCV_VERSION}")
+target_include_directories(fingerprint_core PRIVATE ${OpenCV_INCLUDE_DIRS})
 
 target_link_libraries(fingerprint_core
     PUBLIC
+    ${OpenCV_LIBS}
     log
     android
     jnigraphics
