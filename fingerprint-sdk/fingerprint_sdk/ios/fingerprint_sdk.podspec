@@ -6,14 +6,18 @@ Pod::Spec.new do |s|
   s.license          = { :type => 'Proprietary' }
   s.author           = { 'YellowSense' => 'dev@yellowsense.in' }
   s.source           = { :path => '.' }
-  s.source_files        = 'Classes/**/*.swift', 'Classes/**/*.h', 'Classes/**/*.mm'
-  s.public_header_files = 'Classes/Bridging/OpenCVWrapper.h'
+  s.source_files        = 'Classes/**/*.{h,m,mm,swift}', '../../../../fingerprint_backend_cpp/src/*.cpp', '../../../../fingerprint_backend_cpp/include/*.h'
+  s.public_header_files = 'Classes/Bridging/OpenCVWrapper.h', 'Classes/Bridge/FingerprintCoreWrapper.h'
   s.dependency 'Flutter'
   s.dependency 'OpenCV2'
   s.platform         = :ios, '13.0'
   s.swift_version    = '5.9'
+
   s.pod_target_xcconfig = {
     'DEFINES_MODULE'                                        => 'YES',
-    'CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES' => 'YES'
+    'CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES' => 'YES',
+    'HEADER_SEARCH_PATHS'                                   => '"$(PODS_TARGET_SRCROOT)/../../../../fingerprint_backend_cpp/include"',
+    'CLANG_CXX_LANGUAGE_STANDARD'                           => 'c++17',
+    'CLANG_CXX_LIBRARY'                                     => 'libc++'
   }
-end
+}

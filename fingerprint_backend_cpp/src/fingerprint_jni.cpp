@@ -31,7 +31,7 @@ jobject toJavaBool(JNIEnv* env, bool value) {
 }
 
 jobject toJavaFloat(JNIEnv* env, float value) {
-    jclass floatClass = env->FindClass("java/util/Float");
+    jclass floatClass = env->FindClass("java/lang/Float");
     jmethodID valueOf = env->GetStaticMethodID(floatClass, "valueOf", "(F)Ljava/lang/Float;");
     return env->CallStaticObjectMethod(floatClass, valueOf, value);
 }
