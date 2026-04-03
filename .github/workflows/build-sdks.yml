@@ -115,8 +115,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fingerprint-sdk-android-aar
-          path: fingerprint-sdk/fingerprint_sdk/android/build/outputs/aar/fingerprint_sdk-release.aar
+          path: |
+            fingerprint-sdk/**/*.aar
           retention-days: 30
+          if-no-files-found: error
+          
+      - name: Debug - List all AARs
+        run: find . -name "*.aar"
 
   build-ios-xcframework:
     name: Build iOS XCFramework
