@@ -1,5 +1,10 @@
 #import "FingerprintCoreWrapper.h"
-#import <opencv2/opencv.hpp>
+
+// Include only what we actually use. Full opencv.hpp pulls in stitching headers
+// that conflict with ObjC's '#define NO __objc_no' macro.
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+
 #import "liveness_detector.h"
 #import "quality_analyzer.h"
 #import "template_encoder.h"
