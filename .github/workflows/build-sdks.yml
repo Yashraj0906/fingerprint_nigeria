@@ -158,7 +158,27 @@ jobs:
           # 1. Update existing platform if present, otherwise set to 13.0
           data = data.gsub(/^platform :ios, .*/, "platform :ios, '13.0'")
           
-          # 2. Add or update post_install block to force 13.0 on all pods
+          # 2. Force static linkage for transitive dependencies (OpenCV)
+          data = data.gsub(/^\s*use_frameworks!.*/, "use_frameworks! :linkage => :static")
+          
+          # New Pre-install hook to disable check for transitive static binaries
+          pre_patch = <<~RUBY
+            if defined?(installer) && installer.respond_to?(:pod_targets)
+              installer.pod_targets.each do |target|
+                if target.name == 'OpenCV2'
+                  target.instance_variable_set(:@host_requires_frameworks, false)
+                end
+              end
+            end
+          RUBY
+          
+          if data.include?('pre_install do |installer|')
+            data = data.gsub(/pre_install do \|installer\|/, "pre_install do |installer|\n  " + pre_patch.strip)
+          else
+            data += "\npre_install do |installer|\n  " + pre_patch.strip + "\nend\n"
+          end
+          
+          # 3. Add or update post_install block to force 13.0 on all pods
           patch = <<~RUBY
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
