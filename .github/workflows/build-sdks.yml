@@ -114,18 +114,20 @@ jobs:
         run: |
           chmod +x gradlew
 
-          # Patch example settings to allow mavenLocal (where OpenCV lives).
-          # Flutter generates FAIL_ON_PROJECT_REPOS which blocks any extra repos;
-          # switching to PREFER_SETTINGS is safe and lets fingerprint_sdk's own
-          # settings.gradle repos (including mavenLocal) be used.
-          SETTINGS="settings.gradle.kts"
-          if [ -f "$SETTINGS" ]; then
-            sed -i 's/RepositoriesMode.FAIL_ON_PROJECT_REPOS/RepositoriesMode.PREFER_SETTINGS/g' "$SETTINGS"
-            sed -i '0,/google()/s/google()/mavenLocal()\n        google()/' "$SETTINGS"
-            echo "=== Patched $SETTINGS ==="
-            cat "$SETTINGS"
-          fi
-
+          # Patch settings.gradle.kts: FAIL_ON_PROJECT_REPOS -> PREFER_SETTINGS
+          # and inject mavenLocal() into dependencyResolutionManagement.repositories
+          cat > patch_settings.py << 'EOF'
+          import re, sys, os
+          path = 'settings.gradle.kts'
+          if not os.path.exists(path):
+              print('settings.gradle.kts not found, skipping'); sys.exit(0)
+          txt = open(path).read()
+          txt = txt.replace('RepositoriesMode.FAIL_ON_PROJECT_REPOS', 'RepositoriesMode.PREFER_SETTINGS')
+          txt = re.sub(r'(dependencyResolutionManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
+          open(path, 'w').write(txt)
+          print('=== Patched settings.gradle.kts ==='); print(txt)
+          EOF
+          python3 patch_settings.py
           ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
 
       - name: Upload AAR artifact
