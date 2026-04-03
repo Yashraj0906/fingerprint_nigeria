@@ -109,10 +109,24 @@ jobs:
           MAVENPOM
           echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
-      - name: Build fingerprint_sdk release AAR (standalone — uses its own settings.gradle with mavenLocal)
-        working-directory: fingerprint-sdk/fingerprint_sdk/android
+      - name: Build fingerprint_sdk release AAR (via example app Gradle)
+        working-directory: fingerprint-sdk/example/android
         run: |
-          gradle assembleRelease --no-daemon
+          chmod +x gradlew
+
+          # Patch example settings to allow mavenLocal (where OpenCV lives).
+          # Flutter generates FAIL_ON_PROJECT_REPOS which blocks any extra repos;
+          # switching to PREFER_SETTINGS is safe and lets fingerprint_sdk's own
+          # settings.gradle repos (including mavenLocal) be used.
+          SETTINGS="settings.gradle.kts"
+          if [ -f "$SETTINGS" ]; then
+            sed -i 's/RepositoriesMode.FAIL_ON_PROJECT_REPOS/RepositoriesMode.PREFER_SETTINGS/g' "$SETTINGS"
+            sed -i '0,/google()/s/google()/mavenLocal()\n        google()/' "$SETTINGS"
+            echo "=== Patched $SETTINGS ==="
+            cat "$SETTINGS"
+          fi
+
+          ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
