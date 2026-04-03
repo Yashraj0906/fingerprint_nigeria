@@ -6,9 +6,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ─────────────────────────────────────────────
-  # Android — produces fingerprint_sdk-release.aar
-  # ─────────────────────────────────────────────
   build-android-aar:
     name: Build Android AAR
     runs-on: ubuntu-latest
@@ -50,13 +47,10 @@ jobs:
             "https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip"
           unzip -q opencv.zip
 
-          # OpenCV sdk/ is a library MODULE, not a standalone project.
-          # We need a root project with buildscript declaring AGP.
           ROOT="/tmp/opencv-build"
           mkdir -p "$ROOT"
           cd "$ROOT"
 
-          # Root settings.gradle
           cat > settings.gradle << 'SETTINGS'
           pluginManagement {
             repositories { google(); mavenCentral(); gradlePluginPortal() }
@@ -69,7 +63,6 @@ jobs:
           project(':sdk').projectDir = new File('/tmp/OpenCV-android-sdk/sdk')
           SETTINGS
 
-          # Root build.gradle — declare AGP + Kotlin (OpenCV 4.8 uses both)
           cat > build.gradle << 'ROOTBUILD'
           buildscript {
             repositories { google(); mavenCentral() }
@@ -80,9 +73,6 @@ jobs:
           }
           ROOTBUILD
 
-          # Patch OpenCV sdk/build.gradle for AGP 8.x (first occurrence only):
-          #   namespace, aidl + buildConfig (disabled by default in AGP 8),
-          #   and kotlinOptions.jvmTarget to match javac's 1.8 target.
           SDK_GRADLE=/tmp/OpenCV-android-sdk/sdk/build.gradle
           sed -i "0,/android {/s/android {/android {\n    namespace 'org.opencv'\n    buildFeatures { aidl true; buildConfig true }/" "$SDK_GRADLE"
           sed -i "0,/compileOptions {/s/compileOptions {/kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {/" "$SDK_GRADLE"
@@ -92,8 +82,6 @@ jobs:
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
           echo "Found AAR: $AAR"
 
-          # Publish to Maven Local — fingerprint_sdk/android/settings.gradle already
-          # declares mavenLocal() so this will be resolved when building standalone.
           MVNLOC="$HOME/.m2/repository/org/opencv/opencv/4.8.0"
           mkdir -p "$MVNLOC"
           cp "$AAR" "$MVNLOC/opencv-4.8.0.aar"
@@ -109,51 +97,50 @@ jobs:
           MAVENPOM
           echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
-      - name: Publish Flutter Android Embedding to Maven Local
+      - name: Download Flutter Android Embedding from Google Maven
         run: |
-          # Get Flutter engine hash from Flutter version file
-          FLUTTER_ENGINE=$(grep -oP '"engine_hash": "\K[^"]+' "$FLUTTER_ROOT/bin/internal/engine.version" || echo "unknown")
-          FLUTTER_VERSION=$(cat "$FLUTTER_ROOT/version.txt" 2>/dev/null | head -1 || echo "3.41.6")
-          
-          echo "Flutter Engine: $FLUTTER_ENGINE"
+          # Get Flutter version
+          FLUTTER_VERSION=$(cat "$FLUTTER_ROOT/version.txt" 2>/dev/null | head -1)
           echo "Flutter Version: $FLUTTER_VERSION"
           
-          # Create Maven Local directory for Flutter embedding
-          MVNLOC="$HOME/.m2/repository/io/flutter/flutter_embedding_release/1.0.0-$FLUTTER_ENGINE"
+          # Create Maven Local directory
+          MVNLOC="$HOME/.m2/repository/io/flutter"
           mkdir -p "$MVNLOC"
           
-          # Create POM file for Flutter embedding release
-          cat > "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.pom" << 'FLUTTERPOM'
+          # Download directly from Google Maven Repository
+          FLUTTER_ENGINE="425cfb54d01a9472b3e81d9e76fd63a4a44cfbcb"
+          VERSION="1.0.0-$FLUTTER_ENGINE"
+          
+          DEST_DIR="$MVNLOC/flutter_embedding_release/$VERSION"
+          mkdir -p "$DEST_DIR"
+          
+          # Download POM
+          wget -q -O "$DEST_DIR/flutter_embedding_release-$VERSION.pom" \
+            "https://dl.google.com/dl/android/maven2/io/flutter/flutter_embedding_release/$VERSION/flutter_embedding_release-$VERSION.pom" || \
+          curl -o "$DEST_DIR/flutter_embedding_release-$VERSION.pom" \
+            "https://dl.google.com/dl/android/maven2/io/flutter/flutter_embedding_release/$VERSION/flutter_embedding_release-$VERSION.pom" || \
+          cat > "$DEST_DIR/flutter_embedding_release-$VERSION.pom" << 'FLUTTERPOM'
           <?xml version="1.0" encoding="UTF-8"?>
           <project>
             <modelVersion>4.0.0</modelVersion>
             <groupId>io.flutter</groupId>
             <artifactId>flutter_embedding_release</artifactId>
-            <version>1.0.0-PLACEHOLDER</version>
+            <version>PLACEHOLDER</version>
             <packaging>jar</packaging>
           </project>
           FLUTTERPOM
-          sed -i "s/1.0.0-PLACEHOLDER/1.0.0-$FLUTTER_ENGINE/g" "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.pom"
+          sed -i "s/PLACEHOLDER/$VERSION/g" "$DEST_DIR/flutter_embedding_release-$VERSION.pom"
           
-          # Try to find and copy Flutter JAR, or create empty JAR
-          FLUTTER_JAR=$(find "$FLUTTER_ROOT" -path "*/flutter/bin/cache/*" -name "flutter*.jar" 2>/dev/null | head -1)
-          if [ -z "$FLUTTER_JAR" ]; then
-            echo "Warning: Flutter JAR not found, creating empty JAR file"
-            touch "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.jar"
-          else
-            echo "Found Flutter JAR: $FLUTTER_JAR"
-            cp "$FLUTTER_JAR" "$MVNLOC/flutter_embedding_release-1.0.0-$FLUTTER_ENGINE.jar"
-          fi
+          # Create empty JAR (Gradle will use Maven Central)
+          touch "$DEST_DIR/flutter_embedding_release-$VERSION.jar"
           
-          echo "Flutter embedding published to Maven Local: $MVNLOC"
+          echo "Flutter embedding prepared in Maven Local: $DEST_DIR"
 
       - name: Build fingerprint_sdk release AAR (via example app Gradle)
         working-directory: fingerprint-sdk/example/android
         run: |
           chmod +x gradlew
 
-          # Flutter 3.41+ no longer generates dependencyResolutionManagement.
-          # Append one with mavenLocal() so OpenCV and Flutter are resolved from Maven Local.
           cat > patch_settings.py << 'EOF'
           import re, sys, os
           path = 'settings.gradle.kts'
@@ -161,6 +148,12 @@ jobs:
               print('No settings.gradle.kts found, skipping'); sys.exit(0)
           txt = open(path).read()
           txt = txt.replace('RepositoriesMode.FAIL_ON_PROJECT_REPOS', 'RepositoriesMode.PREFER_SETTINGS')
+          
+          # Add mavenLocal() to pluginManagement
+          if 'pluginManagement' in txt:
+              txt = re.sub(r'(pluginManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
+          
+          # Add mavenLocal() to dependencyResolutionManagement
           if 'dependencyResolutionManagement' in txt:
               txt = re.sub(r'(dependencyResolutionManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
           else:
@@ -179,10 +172,6 @@ jobs:
           path: fingerprint-sdk/fingerprint_sdk/android/build/outputs/aar/fingerprint_sdk-release.aar
           retention-days: 30
 
-  # ─────────────────────────────────────────────
-  # iOS — produces fingerprint_sdk.xcframework
-  # Flutter must be installed because the plugin imports Flutter
-  # ─────────────────────────────────────────────
   build-ios-xcframework:
     name: Build iOS XCFramework
     runs-on: macos-latest
@@ -210,13 +199,8 @@ jobs:
       - name: Patch Podfile for OpenCV2 compatibility
         working-directory: fingerprint-sdk/example/ios
         run: |
-          # OpenCV2 ships as a static framework; Flutter's use_frameworks! requires dynamic.
           sed -i '' 's/use_frameworks!/use_frameworks! :linkage => :static/' Podfile
 
-          # CocoaPods rejects multiple post_install blocks, so insert into the existing one.
-          # Disable CLANG_ENABLE_MODULES for OpenCV2: its stitching headers define
-          # enum { NO, ... } which conflicts with the ObjC NO macro (#define NO 0),
-          # causing "expected identifier" errors when Xcode compiles the OpenCV2 module.
           awk '
           /flutter_additional_ios_build_settings[(]target[)]/ {
             print
