@@ -23,11 +23,12 @@ CaptureResult processFingerImage(const std::vector<uint8_t>& jpegBytes) {
     }
 
     result.quality  = QualityAnalyzer::analyze(image);
-    result.liveness = LivenessDetector::detect(image);
+    // Note: evaluate requires full image and cropped + hand mode. For simple processFingerImage, pass image to all and "Right" as default.
+    result.liveness = LivenessDetector::evaluate(image, image, image, "Right");
 
     // Only run expensive template extraction when quality + liveness pass
     bool qualityOk  = (result.quality.decision != QualityDecision::REJECT);
-    bool livenessOk = result.liveness.isLive;
+    bool livenessOk = result.liveness.passed;
 
     if (qualityOk && livenessOk) {
         result.templ = TemplateEncoder::extractTemplate(image);
