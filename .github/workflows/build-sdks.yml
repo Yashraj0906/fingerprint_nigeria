@@ -61,7 +61,7 @@ jobs:
           include ':sdk'
           EOF
           
-          # 2. Create root build.gradle to supply the missing plugins
+          # 2. Create root build.gradle to supply the missing plugins and repositories
           cat << 'EOF' > build.gradle
           buildscript {
               repositories {
@@ -71,6 +71,13 @@ jobs:
               dependencies {
                   classpath 'com.android.tools.build:gradle:8.1.1'
                   classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0"
+              }
+          }
+          
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
               }
           }
           EOF
