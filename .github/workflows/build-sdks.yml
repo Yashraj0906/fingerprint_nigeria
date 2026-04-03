@@ -114,16 +114,19 @@ jobs:
         run: |
           chmod +x gradlew
 
-          # Patch settings.gradle.kts: FAIL_ON_PROJECT_REPOS -> PREFER_SETTINGS
-          # and inject mavenLocal() into dependencyResolutionManagement.repositories
+          # Flutter 3.41+ no longer generates dependencyResolutionManagement.
+          # Append one with mavenLocal() so OpenCV is resolved from Maven Local.
           cat > patch_settings.py << 'EOF'
           import re, sys, os
           path = 'settings.gradle.kts'
           if not os.path.exists(path):
-              print('settings.gradle.kts not found, skipping'); sys.exit(0)
+              print('No settings.gradle.kts found, skipping'); sys.exit(0)
           txt = open(path).read()
           txt = txt.replace('RepositoriesMode.FAIL_ON_PROJECT_REPOS', 'RepositoriesMode.PREFER_SETTINGS')
-          txt = re.sub(r'(dependencyResolutionManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
+          if 'dependencyResolutionManagement' in txt:
+              txt = re.sub(r'(dependencyResolutionManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
+          else:
+              txt += '\ndependencyResolutionManagement {\n    repositories {\n        mavenLocal()\n        google()\n        mavenCentral()\n    }\n}\n'
           open(path, 'w').write(txt)
           print('=== Patched settings.gradle.kts ==='); print(txt)
           EOF
