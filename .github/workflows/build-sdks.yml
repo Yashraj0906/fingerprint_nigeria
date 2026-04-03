@@ -126,7 +126,7 @@ jobs:
           if 'dependencyResolutionManagement' in txt:
               txt = re.sub(r'(dependencyResolutionManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
           else:
-              txt += '\ndependencyResolutionManagement {\n    repositories {\n        mavenLocal()\n        google()\n        mavenCentral()\n    }\n}\n'
+              txt += '\ndependencyResolutionManagement {\n    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\n    repositories {\n        mavenLocal()\n        google()\n        mavenCentral()\n    }\n}\n'
           open(path, 'w').write(txt)
           print('=== Patched settings.gradle.kts ==='); print(txt)
           EOF
