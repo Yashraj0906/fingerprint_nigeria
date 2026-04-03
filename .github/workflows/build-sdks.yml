@@ -127,6 +127,7 @@ jobs:
           open(path, 'w').write(txt)
           print('=== Patched settings.gradle.kts ==='); print(txt)
           EOF
+          sed -i 's/^          //' patch_settings.py
           python3 patch_settings.py
           ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
 
