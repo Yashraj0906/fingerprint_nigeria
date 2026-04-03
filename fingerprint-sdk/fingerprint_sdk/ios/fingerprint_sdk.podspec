@@ -18,8 +18,9 @@ Pod::Spec.new do |s|
     'DEFINES_MODULE'                                        => 'YES',
     'CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES' => 'YES',
     'FRAMEWORK_SEARCH_PATHS'                                => '$(inherited) "${PODS_ROOT}/OpenCV2"',
-    'HEADER_SEARCH_PATHS'                                   => '$(inherited) "${PODS_ROOT}/OpenCV2/opencv2.framework/Headers" "$(PODS_TARGET_SRCROOT)/Classes/Core/include"',
+    'HEADER_SEARCH_PATHS'                                   => '$(inherited) "${PODS_ROOT}/OpenCV2/opencv2.framework/Headers" "${PODS_TARGET_SRCROOT}/Classes/**" "${PODS_TARGET_SRCROOT}/Classes/Core/include"',
     'CLANG_CXX_LANGUAGE_STANDARD'                           => 'c++17',
-    'CLANG_CXX_LIBRARY'                                     => 'libc++'
+    'CLANG_CXX_LIBRARY'                                     => 'libc++',
+    'OTHER_CPLUSPLUSFLAGS'                                  => '$(inherited) -std=c++17'
   }
 end
