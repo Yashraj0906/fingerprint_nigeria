@@ -92,18 +92,27 @@ jobs:
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
           echo "Found AAR: $AAR"
 
-          # Copy OpenCV AAR directly into the fingerprint_sdk libs/ directory.
-          # build.gradle uses fileTree(dir:'libs') so no Maven setup needed at all.
-          LIBS_DIR="$GITHUB_WORKSPACE/fingerprint-sdk/fingerprint_sdk/android/libs"
-          mkdir -p "$LIBS_DIR"
-          cp "$AAR" "$LIBS_DIR/opencv-4.8.0.aar"
-          echo "OpenCV AAR copied to: $LIBS_DIR/opencv-4.8.0.aar"
+          # Publish to Maven Local — fingerprint_sdk/android/settings.gradle already
+          # declares mavenLocal() so this will be resolved when building standalone.
+          MVNLOC="$HOME/.m2/repository/org/opencv/opencv/4.8.0"
+          mkdir -p "$MVNLOC"
+          cp "$AAR" "$MVNLOC/opencv-4.8.0.aar"
+          cat > "$MVNLOC/opencv-4.8.0.pom" << 'MAVENPOM'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project>
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>org.opencv</groupId>
+            <artifactId>opencv</artifactId>
+            <version>4.8.0</version>
+            <packaging>aar</packaging>
+          </project>
+          MAVENPOM
+          echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
-      - name: Build fingerprint_sdk release AAR (via example app Gradle)
-        working-directory: fingerprint-sdk/example/android
+      - name: Build fingerprint_sdk release AAR (standalone — uses its own settings.gradle with mavenLocal)
+        working-directory: fingerprint-sdk/fingerprint_sdk/android
         run: |
-          chmod +x gradlew
-          ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
+          gradle assembleRelease --no-daemon
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4

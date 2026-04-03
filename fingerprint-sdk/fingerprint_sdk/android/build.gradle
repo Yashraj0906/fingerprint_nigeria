@@ -38,7 +38,7 @@ dependencies {
     implementation 'androidx.camera:camera-view:1.3.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
-    // OpenCV — provided as a local .aar in the libs/ directory.
-    // CI copies opencv-release.aar here before building; for local dev copy it manually.
-    implementation fileTree(dir: 'libs', include: ['*.aar'])
+    // OpenCV — resolved via mavenLocal() in settings.gradle.
+    // CI publishes opencv-4.8.0.aar to Maven Local before building.
+    implementation 'org.opencv:opencv:4.8.0'
 }
