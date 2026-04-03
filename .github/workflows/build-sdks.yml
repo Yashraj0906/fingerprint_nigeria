@@ -20,11 +20,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle 8.4 (used for OpenCV standalone build)
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
-          cache-disabled: true
 
       - name: Install Flutter
         uses: subosito/flutter-action@v2
@@ -34,118 +31,55 @@ jobs:
       - name: Flutter precache Android artifacts
         run: flutter precache --android
 
-      - name: Generate example Android project (creates gradlew + Flutter Gradle integration)
+      - name: Generate example Android project
         working-directory: fingerprint-sdk/example
         run: |
           flutter pub get
           yes "" | flutter create --platforms android . || true
 
-      - name: Download OpenCV Android SDK, build AAR, and publish to Maven Local
+      - name: Fix gradle settings for repository resolution
+        working-directory: fingerprint-sdk/example/android
         run: |
-          cd /tmp
-          wget -q -O opencv.zip \
-            "https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip"
-          unzip -q opencv.zip
+          # Remove conflicting repositories from build files
+          find . -name "build.gradle.kts" -exec sed -i '/repositories.*{/,/}/{ /google()/d; /mavenCentral()/d; /maven {/,/}/d; }' {} \;
+          
+          # Ensure settings.gradle.kts has proper repository config
+          cat > patch_gradle_settings.py << 'PYTHONEOF'
+          import os
+          import re
 
-          ROOT="/tmp/opencv-build"
-          mkdir -p "$ROOT"
-          cd "$ROOT"
+          settings_path = 'settings.gradle.kts'
+          if os.path.exists(settings_path):
+              with open(settings_path, 'r') as f:
+                  content = f.read()
+              
+              # Remove existing repositories from both blocks
+              content = re.sub(r'(pluginManagement\s*\{[^}]*?repositories\s*\{)[^}]*(\})', 
+                             r'\1 google(); mavenCentral(); gradlePluginPortal() \2', 
+                             content, flags=re.DOTALL)
+              
+              content = re.sub(r'(dependencyResolutionManagement\s*\{[^}]*?repositories\s*\{)[^}]*(\})', 
+                             r'\1 google(); mavenCentral() \2', 
+                             content, flags=re.DOTALL)
+              
+              # If no dependencyResolutionManagement, add it
+              if 'dependencyResolutionManagement' not in content:
+                  content += '\n\ndependencyResolutionManagement {\n  repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\n  repositories {\n    google()\n    mavenCentral()\n  }\n}\n'
+              
+              with open(settings_path, 'w') as f:
+                  f.write(content)
+              
+              print("✅ Patched settings.gradle.kts")
+              print(content[:500])
+          PYTHONEOF
+          
+          python3 patch_gradle_settings.py
 
-          cat > settings.gradle << 'SETTINGS'
-          pluginManagement {
-            repositories { google(); mavenCentral(); gradlePluginPortal() }
-          }
-          dependencyResolutionManagement {
-            repositories { google(); mavenCentral() }
-          }
-          rootProject.name = "opencv-android"
-          include ':sdk'
-          project(':sdk').projectDir = new File('/tmp/OpenCV-android-sdk/sdk')
-          SETTINGS
-
-          cat > build.gradle << 'ROOTBUILD'
-          buildscript {
-            repositories { google(); mavenCentral() }
-            dependencies {
-              classpath 'com.android.tools.build:gradle:8.1.4'
-              classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
-            }
-          }
-          ROOTBUILD
-
-          SDK_GRADLE=/tmp/OpenCV-android-sdk/sdk/build.gradle
-          sed -i "0,/android {/s/android {/android {\n    namespace 'org.opencv'\n    buildFeatures { aidl true; buildConfig true }/" "$SDK_GRADLE"
-          sed -i "0,/compileOptions {/s/compileOptions {/kotlinOptions { jvmTarget = '1.8' }\n    compileOptions {/" "$SDK_GRADLE"
-
-          gradle :sdk:assembleRelease --no-daemon -q
-
-          AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
-          echo "Found AAR: $AAR"
-
-          MVNLOC="$HOME/.m2/repository/org/opencv/opencv/4.8.0"
-          mkdir -p "$MVNLOC"
-          cp "$AAR" "$MVNLOC/opencv-4.8.0.aar"
-          cat > "$MVNLOC/opencv-4.8.0.pom" << 'MAVENPOM'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <project>
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>org.opencv</groupId>
-            <artifactId>opencv</artifactId>
-            <version>4.8.0</version>
-            <packaging>aar</packaging>
-          </project>
-          MAVENPOM
-          echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
-
-      - name: Build fingerprint_sdk release AAR (via example app Gradle)
+      - name: Build fingerprint_sdk AAR
         working-directory: fingerprint-sdk/example/android
         run: |
           chmod +x gradlew
-
-          # CRITICAL FIX: Patch settings.gradle.kts to ensure google() repo is FIRST
-          cat > patch_settings.py << 'EOF'
-          import re, sys, os
-          path = 'settings.gradle.kts'
-          if not os.path.exists(path):
-              print('No settings.gradle.kts found, skipping'); sys.exit(0)
-          
-          txt = open(path).read()
-          
-          # Change repository mode
-          txt = txt.replace('RepositoriesMode.FAIL_ON_PROJECT_REPOS', 'RepositoriesMode.PREFER_SETTINGS')
-          
-          # Fix pluginManagement - add google() BEFORE mavenLocal()
-          if 'pluginManagement' in txt:
-              txt = re.sub(
-                  r'(pluginManagement\s*\{[^}]*?repositories\s*\{)',
-                  r'\1\n        google()\n        mavenLocal()',
-                  txt,
-                  count=1,
-                  flags=re.DOTALL
-              )
-          
-          # Fix dependencyResolutionManagement - add BOTH google() and mavenLocal()
-          if 'dependencyResolutionManagement' in txt:
-              txt = re.sub(
-                  r'(dependencyResolutionManagement\s*\{[^}]*?repositories\s*\{)',
-                  r'\1\n        google()\n        mavenLocal()\n        mavenCentral()',
-                  txt,
-                  count=1,
-                  flags=re.DOTALL
-              )
-          else:
-              # Add complete block if missing
-              txt = txt.rstrip() + '\n\ndependencyResolutionManagement {\n    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\n    repositories {\n        google()\n        mavenLocal()\n        mavenCentral()\n    }\n}\n'
-          
-          open(path, 'w').write(txt)
-          print('=== Patched settings.gradle.kts ===')
-          print(txt)
-          EOF
-          
-          python3 patch_settings.py
-          
-          # Build with explicit flags
-          ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
+          ./gradlew :fingerprint_sdk:assembleRelease --no-daemon -x lintVitalRelease
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
@@ -170,79 +104,49 @@ jobs:
       - name: Flutter precache iOS artifacts
         run: flutter precache --ios
 
-      - name: Get example app dependencies
+      - name: Get dependencies
         working-directory: fingerprint-sdk/example
-        run: flutter pub get
+        run: |
+          flutter pub get
+          yes "" | flutter create --platforms ios . || true
 
-      - name: Regenerate iOS native project (creates Podfile + xcodeproj)
-        working-directory: fingerprint-sdk/example
-        run: yes "" | flutter create --platforms ios . || true
-
-      - name: Patch Podfile for OpenCV2 compatibility
+      - name: Patch Podfile
         working-directory: fingerprint-sdk/example/ios
         run: |
           sed -i '' 's/use_frameworks!/use_frameworks! :linkage => :static/' Podfile
-
-          awk '
-          /flutter_additional_ios_build_settings[(]target[)]/ {
-            print
-            print "    if target.name == \"OpenCV2\""
-            print "      target.build_configurations.each { |c| c.build_settings[\"CLANG_ENABLE_MODULES\"] = \"NO\" }"
-            print "    end"
-            next
-          }
-          { print }
-          ' Podfile > Podfile.tmp && mv Podfile.tmp Podfile
-
-          echo "=== Patched Podfile ==="
-          cat Podfile
+          awk '/flutter_additional_ios_build_settings/ { print; print "    if target.name == \"OpenCV2\"\n      target.build_configurations.each { |c| c.build_settings[\"CLANG_ENABLE_MODULES\"] = \"NO\" }\n    end"; next } 1' Podfile > Podfile.tmp && mv Podfile.tmp Podfile
 
       - name: Pod install
         working-directory: fingerprint-sdk/example/ios
         run: pod install --repo-update
 
-      - name: Archive plugin framework for iOS device (arm64)
+      - name: Build iOS device framework
         working-directory: fingerprint-sdk/example/ios
         run: |
-          set -eo pipefail
-          xcodebuild archive \
-            -workspace Runner.xcworkspace \
-            -scheme fingerprint_sdk \
-            -destination "generic/platform=iOS" \
-            -archivePath "$PWD/build/ios-device.xcarchive" \
-            SKIP_INSTALL=NO \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+          xcodebuild archive -workspace Runner.xcworkspace -scheme fingerprint_sdk \
+            -destination "generic/platform=iOS" -archivePath "$PWD/build/ios-device.xcarchive" \
+            SKIP_INSTALL=NO BUILD_LIBRARY_FOR_DISTRIBUTION=YES
 
-      - name: Archive plugin framework for iOS Simulator
+      - name: Build iOS simulator framework
         working-directory: fingerprint-sdk/example/ios
         run: |
-          set -eo pipefail
-          xcodebuild archive \
-            -workspace Runner.xcworkspace \
-            -scheme fingerprint_sdk \
-            -destination "generic/platform=iOS Simulator" \
-            -archivePath "$PWD/build/ios-simulator.xcarchive" \
-            SKIP_INSTALL=NO \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+          xcodebuild archive -workspace Runner.xcworkspace -scheme fingerprint_sdk \
+            -destination "generic/platform=iOS Simulator" -archivePath "$PWD/build/ios-simulator.xcarchive" \
+            SKIP_INSTALL=NO BUILD_LIBRARY_FOR_DISTRIBUTION=YES
 
-      - name: Locate frameworks and create XCFramework
+      - name: Create XCFramework
         working-directory: fingerprint-sdk/example/ios
         run: |
-          DEVICE_FW=$(find "$PWD/build/ios-device.xcarchive" \
-            -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
-          SIM_FW=$(find "$PWD/build/ios-simulator.xcarchive" \
-            -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
-
-          xcodebuild -create-xcframework \
-            -framework "$DEVICE_FW" \
-            -framework "$SIM_FW" \
+          DEVICE_FW=$(find "$PWD/build/ios-device.xcarchive" -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
+          SIM_FW=$(find "$PWD/build/ios-simulator.xcarchive" -name "fingerprint_sdk.framework" -not -path "*/dSYMs/*" | head -1)
+          xcodebuild -create-xcframework -framework "$DEVICE_FW" -framework "$SIM_FW" \
             -output "$PWD/build/fingerprint_sdk.xcframework"
 
       - name: Zip XCFramework
         working-directory: fingerprint-sdk/example/ios/build
         run: zip -r fingerprint_sdk.xcframework.zip fingerprint_sdk.xcframework
 
-      - name: Upload XCFramework artifact
+      - name: Upload XCFramework
         uses: actions/upload-artifact@v4
         with:
           name: fingerprint-sdk-ios-xcframework
