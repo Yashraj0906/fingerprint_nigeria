@@ -23,11 +23,16 @@ CaptureResult processFingerImage(const std::vector<uint8_t>& jpegBytes) {
     }
 
     result.quality  = QualityAnalyzer::analyze(image);
-    result.liveness = LivenessDetector::detect(image);
+
+    // Prepare gray + small crop for liveness (use full image if no ROI available)
+    cv::Mat gray;
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    // evaluate(gray_sm, bgr_sm, full_bgr, hand_mode)
+    result.liveness = LivenessDetector::evaluate(gray, image, image, "hand");
 
     // Only run expensive template extraction when quality + liveness pass
     bool qualityOk  = (result.quality.decision != QualityDecision::REJECT);
-    bool livenessOk = result.liveness.isLive;
+    bool livenessOk = result.liveness.passed;
 
     if (qualityOk && livenessOk) {
         result.templ = TemplateEncoder::extractTemplate(image);
