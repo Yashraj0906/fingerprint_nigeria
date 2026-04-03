@@ -3,6 +3,7 @@
 #include <vector>
 #include <map>
 #include <opencv2/core.hpp>
+#include "fingerprint_core.h"
 #include "liveness_detector.h"
 #include "quality_analyzer.h"
 #include "template_encoder.h"
@@ -19,8 +20,12 @@ jobject createJavaHashMap(JNIEnv* env) {
 }
 
 void putInMap(JNIEnv* env, jobject map, const char* key, jobject value) {
-    jclass mapClass = env->FindClass("java/util/HashMap");
-    jmethodID put = env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+    static jclass mapClass = nullptr;
+    static jmethodID put = nullptr;
+    if (mapClass == nullptr) {
+        mapClass = (jclass)env->NewGlobalRef(env->FindClass("java/util/HashMap"));
+        put = env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+    }
     env->CallObjectMethod(map, put, env->NewStringUTF(key), value);
 }
 

@@ -151,8 +151,37 @@ jobs:
       - name: Patch Podfile
         working-directory: fingerprint-sdk/example/ios
         run: |
-          sed -i '' 's/use_frameworks!/use_frameworks! :linkage => :static/' Podfile
-          awk '/flutter_additional_ios_build_settings/ { print; print "    if target.name == \"OpenCV2\"\n      target.build_configurations.each { |c| c.build_settings[\"CLANG_ENABLE_MODULES\"] = \"NO\" }\n    end"; next } 1' Podfile > Podfile.tmp && mv Podfile.tmp Podfile
+          sed -i '' "1s/^/platform :ios, '13.0'\\n/" Podfile
+          cat << 'EOF' > patch_podfile.rb
+          data = File.read('Podfile')
+          
+          # 1. Update existing platform if present, otherwise set to 13.0
+          data = data.gsub(/^platform :ios, .*/, "platform :ios, '13.0'")
+          
+          # 2. Add or update post_install block to force 13.0 on all pods
+          patch = <<~RUBY
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+                if target.name == 'OpenCV2'
+                  config.build_settings['CLANG_ENABLE_MODULES'] = 'NO'
+                end
+              end
+            end
+          RUBY
+          
+          if data.include?('post_install do |installer|')
+            data = data.gsub(/post_install do \|installer\|/, "post_install do |installer|\n  " + patch.strip)
+          else
+            data += "\npost_install do |installer|\n  " + patch.strip + "\nend\n"
+          end
+          
+          File.write('Podfile', data)
+          puts "--- SUCCESSFULLY PATCHED PODFILE (v3.0) ---"
+          puts data
+          puts "-----------------------"
+          EOF
+          ruby patch_podfile.rb
 
       - name: Pod install
         working-directory: fingerprint-sdk/example/ios

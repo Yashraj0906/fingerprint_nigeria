@@ -36,7 +36,7 @@ class LivenessDetector {
         return LivenessResult(
             passed     = res["passed"] as? Boolean ?: false,
             reason     = res["reason"] as? String,
-            confidence = (res["confidence"] as? Float)?.toDouble() ?: 0.0
+            confidence = (res["confidence"] as? Number)?.toDouble() ?: 0.0
         )
     }
 

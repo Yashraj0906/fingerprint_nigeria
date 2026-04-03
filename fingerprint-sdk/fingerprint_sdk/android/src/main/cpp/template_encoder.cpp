@@ -1,5 +1,7 @@
 #include "template_encoder.h"
-#include "image_processor.h"
+#include "fingerprint_core.h"
+#include "quality_analyzer.h"
+#include "liveness_detector.h"
 #include <cmath>
 #include <algorithm>
 #include <map>

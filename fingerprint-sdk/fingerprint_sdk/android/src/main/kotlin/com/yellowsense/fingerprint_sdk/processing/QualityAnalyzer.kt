@@ -28,10 +28,9 @@ object QualityAnalyzer {
 
     enum class Verdict { ACCEPT, RETRY, REJECT }
 
-    companion object {
-        init {
-            System.loadLibrary("fingerprint_core")
-        }
+    init {
+        System.loadLibrary("fingerprint_core")
+        android.util.Log.i("QualityAnalyzer", "JNI Library loaded (v3.0 - final build fix)")
     }
 
     private external fun nativeAnalyze(imageAddr: Long): Map<String, Any>
@@ -40,12 +39,12 @@ object QualityAnalyzer {
         val res = nativeAnalyze(image.nativeObjAddr)
         
         return QualityResult(
-            score = (res["compositeScore"] as? Float)?.toDouble() ?: 0.0,
-            blurScore = (res["blurScore"] as? Float)?.toDouble() ?: 0.0,
-            contrastScore = (res["contrastScore"] as? Float)?.toDouble() ?: 0.0,
-            ridgeScore = (res["ridgeClarityScore"] as? Float)?.toDouble() ?: 0.0,
-            coverageScore = (res["coverageScore"] as? Float)?.toDouble() ?: 0.0,
-            motionScore = (res["orientationScore"] as? Float)?.toDouble() ?: 0.0,
+            score = (res["compositeScore"] as? Number)?.toDouble() ?: 0.0,
+            blurScore = (res["blurScore"] as? Number)?.toDouble() ?: 0.0,
+            contrastScore = (res["contrastScore"] as? Number)?.toDouble() ?: 0.0,
+            ridgeScore = (res["ridgeClarityScore"] as? Number)?.toDouble() ?: 0.0,
+            coverageScore = (res["coverageScore"] as? Number)?.toDouble() ?: 0.0,
+            motionScore = (res["orientationScore"] as? Number)?.toDouble() ?: 0.0,
             verdict = when (res["decision"] as? String) {
                 "ACCEPT" -> Verdict.ACCEPT
                 "RETRY"  -> Verdict.RETRY

@@ -1,6 +1,5 @@
 #include "image_processor.h"
 #include <cmath>
-#include <algorithm>
 
 namespace fingerprint {
 
@@ -88,7 +87,7 @@ cv::Mat ImageProcessor::applyGaborBank(const cv::Mat& gray, double ridgeFreq) {
 
     double sigma = 0.56 * ridgeFreq;
     int    ksize = (int)(6 * sigma + 1) | 1;   // force odd
-    ksize = std::clamp(ksize, 3, 31);
+    ksize = (ksize < 3) ? 3 : (ksize > 31) ? 31 : ksize;
 
     for (int i = 0; i < 8; i++) {
         double theta = i * CV_PI / 8.0;
