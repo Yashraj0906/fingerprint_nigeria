@@ -16,7 +16,7 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'DEFINES_MODULE'                                        => 'YES',
     'CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES' => 'YES',
-    'HEADER_SEARCH_PATHS'                                   => '"$(PODS_TARGET_SRCROOT)/../../../../fingerprint_backend_cpp/include"',
+    'HEADER_SEARCH_PATHS'                                   => '"$(PODS_TARGET_SRCROOT)/../../../fingerprint_backend_cpp/include"',
     'CLANG_CXX_LANGUAGE_STANDARD'                           => 'c++17',
     'CLANG_CXX_LIBRARY'                                     => 'libc++'
   }
