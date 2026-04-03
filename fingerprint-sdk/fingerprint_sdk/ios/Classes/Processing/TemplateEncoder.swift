@@ -41,7 +41,6 @@ enum TemplateEncoder {
         return (Data(bgr), w, h)
     }
 }
-}
 
 // MARK: - Helpers
 

@@ -72,4 +72,3 @@ final class LivenessDetector {
         return (Data(bgr), w, h)
     }
 }
-}

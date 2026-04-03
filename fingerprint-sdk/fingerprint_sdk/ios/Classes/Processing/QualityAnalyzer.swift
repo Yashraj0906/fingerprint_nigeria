@@ -74,7 +74,6 @@ enum QualityAnalyzer {
         return (Data(bgr), w, h)
     }
 }
-}
 
 // MARK: - Array Statistics
 
