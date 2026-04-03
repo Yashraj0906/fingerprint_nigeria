@@ -29,6 +29,7 @@ class FingerResult(BaseModel):
     contrast_score:      Optional[float]
     ridge_score:         Optional[float]
     coverage_score:      Optional[float]
+    orientation_score:   Optional[float] = None
     liveness_passed:     bool
     liveness_confidence: Optional[float]
     is_ai_generated:     bool             = False
