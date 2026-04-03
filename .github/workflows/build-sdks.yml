@@ -109,8 +109,9 @@ jobs:
           MAVENPOM
 
           # Flutter 3.16+ uses dependencyResolutionManagement in settings.gradle
-          # and forbids injecting repositories via allprojects. We must patch settings.gradle.
-          sed -i 's/mavenCentral()/mavenCentral()\n        mavenLocal()/g' ../example/android/settings.gradle
+          # and forbids injecting repositories via allprojects. We must patch settings.gradle(.kts).
+          sed -i 's/mavenCentral()/mavenCentral()\n        mavenLocal()/g' ../example/android/settings.gradle || true
+          sed -i 's/mavenCentral()/mavenCentral()\n        mavenLocal()/g' ../example/android/settings.gradle.kts || true
 
           echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
