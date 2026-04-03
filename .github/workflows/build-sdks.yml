@@ -47,13 +47,35 @@ jobs:
           wget -q https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip
           unzip -q opencv-4.8.0-android-sdk.zip
           
-          # We must compile OpenCV's sdk into an AAR so Gradle can resolve it later
           cd OpenCV-android-sdk
+          
+          # 1. Create settings.gradle
           cat << 'EOF' > settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
           include ':sdk'
           EOF
           
-          # Fix namespace required by AGP 8.x
+          # 2. Create root build.gradle to supply the missing plugins
+          cat << 'EOF' > build.gradle
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:8.1.1'
+                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0"
+              }
+          }
+          EOF
+          
+          # 3. Fix namespace required by AGP 8.x
           sed -i 's/apply plugin: '"'"'com.android.library'"'"'/apply plugin: '"'"'com.android.library'"'"'\n\nandroid {\n    namespace "org.opencv"\n}/g' sdk/build.gradle
           
           echo "Building OpenCV AAR..."
