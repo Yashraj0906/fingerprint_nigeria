@@ -26,7 +26,8 @@ float QualityAnalyzer::computeBlurScore(const cv::Mat& gray) {
 
     // Blend: Laplacian variance dominates
     double combined = 0.6 * (lapVar / 100.0) + 0.4 * (tenenMean / 20.0);
-    return std::clamp((float)(combined * 100.0), 0.0f, 100.0f);
+    float combined_val = combined * 100.0;
+    return combined_val < 0.0f ? 0.0f : (combined_val > 100.0f ? 100.0f : (float)combined_val);
 }
 
 float QualityAnalyzer::computeContrastScore(const cv::Mat& gray) {
@@ -52,7 +53,8 @@ float QualityAnalyzer::computeContrastScore(const cv::Mat& gray) {
     float brightnessPenalty = (mean[0] < 55 || mean[0] > 215) ? 0.5f : 1.0f;
 
     float score = (float)(rms / 60.0 * 50.0) + entNorm * 0.5f;
-    return std::clamp(score * brightnessPenalty, 0.0f, 100.0f);
+    float final_score = score * brightnessPenalty;
+    return final_score < 0.0f ? 0.0f : (final_score > 100.0f ? 100.0f : final_score);
 }
 
 float QualityAnalyzer::computeRidgeClarityScore(const cv::Mat& gray) {
@@ -63,7 +65,7 @@ float QualityAnalyzer::computeRidgeClarityScore(const cv::Mat& gray) {
     // Ideal density ~15 %
     double deviation = std::abs(density - 0.15);
     float score = (float)(100.0 * (1.0 - deviation / 0.15));
-    return std::clamp(score, 0.0f, 100.0f);
+    return score < 0.0f ? 0.0f : (score > 100.0f ? 100.0f : score);
 }
 
 float QualityAnalyzer::computeCoverageScore(const cv::Mat& gray) {
@@ -74,10 +76,12 @@ float QualityAnalyzer::computeCoverageScore(const cv::Mat& gray) {
     // Ideal 30-80 %; penalise outside that band
     if (coverage >= 0.30 && coverage <= 0.80) {
         float centreDist = (float)std::abs(coverage - 0.55);
-        return std::clamp(100.0f - centreDist * 200.0f, 0.0f, 100.0f);
+        float cov_score = 100.0f - centreDist * 200.0f;
+        return cov_score < 0.0f ? 0.0f : (cov_score > 100.0f ? 100.0f : cov_score);
     }
     float dist = (float)std::min(std::abs(coverage - 0.30), std::abs(coverage - 0.80));
-    return std::clamp(100.0f - dist * 500.0f, 0.0f, 100.0f);
+    float cov_dist_score = 100.0f - dist * 500.0f;
+    return cov_dist_score < 0.0f ? 0.0f : (cov_dist_score > 100.0f ? 100.0f : cov_dist_score);
 }
 
 float QualityAnalyzer::computeOrientationScore(const cv::Mat& gray) {
@@ -111,7 +115,8 @@ float QualityAnalyzer::computeOrientationScore(const cv::Mat& gray) {
 
     float coherence = std::sqrt(sinSum * sinSum + cosSum * cosSum) / count;
     // Real fingerprint coherence ~0.6-0.9 → score 67-100
-    return std::clamp(coherence * 111.0f, 0.0f, 100.0f);
+    float coh_score = coherence * 111.0f;
+    return coh_score < 0.0f ? 0.0f : (coh_score > 100.0f ? 100.0f : coh_score);
 }
 
 std::string QualityAnalyzer::generateGuidance(const QualityResult& r) {
@@ -154,7 +159,7 @@ QualityResult QualityAnalyzer::analyze(const cv::Mat& image) {
         r.coverageScore     * 0.15f +
         r.orientationScore  * 0.20f;
 
-    r.compositeScore = std::clamp(r.compositeScore, 0.0f, 100.0f);
+    r.compositeScore = r.compositeScore < 0.0f ? 0.0f : (r.compositeScore > 100.0f ? 100.0f : r.compositeScore);
 
     if      (r.compositeScore >= 70.0f) r.decision = QualityDecision::ACCEPT;
     else if (r.compositeScore >= 40.0f) r.decision = QualityDecision::RETRY;

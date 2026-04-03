@@ -1,4 +1,7 @@
 #include "fingerprint_core.h"
+#include "quality_analyzer.h"
+#include "liveness_detector.h"
+#include "template_encoder.h"
 
 namespace fingerprint {
 
