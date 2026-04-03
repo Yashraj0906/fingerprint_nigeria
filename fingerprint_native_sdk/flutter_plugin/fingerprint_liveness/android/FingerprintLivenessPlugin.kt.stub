@@ -1,0 +1,30 @@
+// Android native plugin stub
+// ─────────────────────────────────────────────────────────────────────────────
+// This file will be implemented by the C++ engineer.
+// Place fingerprint-sdk.aar in android/libs/ and reference it from build.gradle.
+
+// When the .aar is ready, implement:
+//
+// class FingerprintLivenessPlugin : FlutterPlugin, MethodCallHandler {
+//
+//   override fun onMethodCall(call: MethodCall, result: Result) {
+//     if (call.method == "analyzeFrame") {
+//       val imageBytes = call.argument<ByteArray>("imageBytes")!!
+//       val hand = call.argument<String>("hand")!!
+//       val mode = call.argument<String>("mode")!!
+//
+//       // Call into the .aar native library
+//       val sdkResult = FingerprintSDK.analyzeFrame(imageBytes, hand, mode)
+//
+//       // Return as Map matching FingerprintResult.fromMap() structure
+//       result.success(sdkResult.toMap())
+//     } else {
+//       result.notImplemented()
+//     }
+//   }
+// }
+
+// NOTE: The output Map must match these exact keys:
+// hand_detected, hand, guidance, fingers[]
+//   └── finger_id, detected, quality_score, blur_score, illum_score,
+//       liveness, liveness_conf, is_ai_generated, guidance, bbox_pct{x,y,w,h}

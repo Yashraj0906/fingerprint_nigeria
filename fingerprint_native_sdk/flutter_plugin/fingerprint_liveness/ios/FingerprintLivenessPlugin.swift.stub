@@ -1,0 +1,31 @@
+// iOS native plugin stub
+// ─────────────────────────────────────────────────────────────────────────────
+// This file will be implemented by the C++ engineer.
+// Add FingerprintSDK.xcframework to ios/Frameworks/ and link in Xcode.
+
+// When the .xcframework is ready, implement in Swift:
+//
+// @objc class FingerprintLivenessPlugin: NSObject, FlutterPlugin {
+//
+//   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+//     if call.method == "analyzeFrame" {
+//       let args = call.arguments as! [String: Any]
+//       let imageBytes = args["imageBytes"] as! FlutterStandardTypedData
+//       let hand = args["hand"] as! String
+//       let mode = args["mode"] as! String
+//
+//       // Call into the .xcframework native library
+//       let sdkResult = FingerprintSDK.analyzeFrame(imageData: imageBytes.data, hand: hand, mode: mode)
+//
+//       // Return as Dictionary matching FingerprintResult.fromMap() structure
+//       result(sdkResult.toDictionary())
+//     } else {
+//       result(FlutterMethodNotImplemented)
+//     }
+//   }
+// }
+
+// NOTE: The output Dictionary must match these exact keys:
+// hand_detected, hand, guidance, fingers[]
+//   └── finger_id, detected, quality_score, blur_score, illum_score,
+//       liveness, liveness_conf, is_ai_generated, guidance, bbox_pct{x,y,w,h}

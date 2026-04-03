@@ -13,13 +13,14 @@ class Verdict(str, Enum):
 
 @dataclass
 class QualityResult:
-    score:           float
-    blur_score:      float
-    contrast_score:  float
-    ridge_score:     float
-    coverage_score:  float
-    verdict:         Verdict
-    guidance_message: Optional[str] = None
+    score:               float
+    blur_score:          float
+    contrast_score:      float
+    ridge_score:         float
+    coverage_score:      float
+    orientation_score:   float
+    verdict:             Verdict
+    guidance_message:    Optional[str] = None
 
     @property
     def passed(self) -> bool:
@@ -28,17 +29,29 @@ class QualityResult:
 
 def analyze(gray: np.ndarray) -> QualityResult:
     """
-    Four-metric quality scorer for contactless fingerprint capture.
-    Weights: blur=0.30, contrast=0.20, ridges=0.30, coverage=0.20
+    Five-metric quality scorer for contactless fingerprint capture.
+
+    Weights (sum = 1.0):
+      blur        0.25  — sharpness (Laplacian + Tenengrad)
+      contrast    0.15  — illumination / RMS contrast
+      ridges      0.25  — Canny edge density in fingerprint range
+      coverage    0.15  — finger area vs background
+      orientation 0.20  — ridge orientation field consistency (NEW)
+
     Thresholds: >70 ACCEPT | 40-70 RETRY | <40 REJECT
     """
-    blur     = _blur_score(gray)
-    contrast = _contrast_score(gray)
-    ridges   = _ridge_clarity_score(gray)
-    coverage = _coverage_score(gray)
+    blur        = _blur_score(gray)
+    contrast    = _contrast_score(gray)
+    ridges      = _ridge_clarity_score(gray)
+    coverage    = _coverage_score(gray)
+    orientation = _orientation_consistency_score(gray)
 
     composite = float(np.clip(
-        blur * 0.30 + contrast * 0.20 + ridges * 0.30 + coverage * 0.20,
+        blur        * 0.25
+        + contrast  * 0.15
+        + ridges    * 0.25
+        + coverage  * 0.15
+        + orientation * 0.20,
         0.0, 100.0
     ))
 
@@ -53,17 +66,23 @@ def analyze(gray: np.ndarray) -> QualityResult:
     _, binary_raw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     raw_coverage_ratio = cv2.countNonZero(binary_raw) / (gray.shape[0] * gray.shape[1])
 
-    guidance = _guidance_message(blur, contrast, ridges, coverage, float(gray.mean()), raw_coverage_ratio)
+    guidance = _guidance_message(blur, contrast, ridges, coverage,
+                                 float(gray.mean()), raw_coverage_ratio, orientation)
 
-    return QualityResult(composite, blur, contrast, ridges, coverage, verdict, guidance)
+    return QualityResult(composite, blur, contrast, ridges, coverage,
+                         orientation, verdict, guidance)
 
 
 # ── Guidance ──────────────────────────────────────────────────────────────────
 
 def _guidance_message(blur: float, contrast: float, ridge: float,
                       coverage: float, brightness: float,
-                      raw_coverage_ratio: float = 0.5) -> Optional[str]:
-    """Single most-important actionable hint. Priority: lighting > blur > position > ridges."""
+                      raw_coverage_ratio: float = 0.5,
+                      orientation: float = 50.0) -> Optional[str]:
+    """
+    Single most-important actionable hint.
+    Priority: lighting > blur > position > ridges > orientation consistency.
+    """
     if brightness < 55:
         return "Too dark — move to better lighting"
     if brightness > 215:
@@ -78,6 +97,8 @@ def _guidance_message(blur: float, contrast: float, ridge: float,
         return "Improve lighting — low contrast"
     if ridge < 30:
         return "Flatten finger slightly — ridges unclear"
+    if orientation < 30:
+        return "Flatten your finger evenly — uneven pressure distorts ridges"
     return None
 
 
@@ -176,7 +197,63 @@ def _contrast_score(gray: np.ndarray) -> float:
     ))
 
 
-# ── Ridge clarity score (unchanged) ──────────────────────────────────────────
+# ── Orientation consistency score (new) ──────────────────────────────────────
+
+def _orientation_consistency_score(gray: np.ndarray) -> float:
+    """
+    Measure how consistently ridge orientations vary across the fingerprint.
+
+    WHY THIS MATTERS:
+    A real, well-captured fingerprint has a smooth orientation field — local
+    ridge directions change slowly and predictably (arches, loops, whorls).
+    A blurry image, a printed fake, or a finger pressed unevenly produces
+    chaotic, incoherent orientations.  None of the other four metrics catch
+    this directly: a blurry image can still have high Canny edge density
+    while its orientation field is random noise.
+
+    METHOD (based on NFIQ2 orientation certainty level):
+      1. Compute Sobel gradients (gx, gy) across the image.
+      2. For each 16×16 block, compute the block-level ridge orientation
+         using the double-angle trick:
+           cos2θ = Σ(gx²-gy²)   sin2θ = Σ(2·gx·gy)
+         This handles the 180° ambiguity (ridges are directionless lines).
+         Only blocks with meaningful gradient energy are included.
+      3. Compute the circular mean resultant length R of all block angles.
+         R → 1.0  means all blocks agree  → consistent orientation field
+         R → 0.0  means blocks disagree  → chaotic / low quality
+
+    Returns 0–100.  Typical good contactless fingerprint: 60–90.
+    """
+    h, w   = gray.shape
+    BLOCK  = 16
+
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+
+    cos2 = gx * gx - gy * gy     # ∝ cos(2θ)|∇|²
+    sin2 = 2.0 * gx * gy         # ∝ sin(2θ)|∇|²
+
+    block_angles = []
+    for r in range(0, h - BLOCK + 1, BLOCK):
+        for c in range(0, w - BLOCK + 1, BLOCK):
+            bc  = float(cos2[r:r + BLOCK, c:c + BLOCK].mean())
+            bs  = float(sin2[r:r + BLOCK, c:c + BLOCK].mean())
+            mag = np.sqrt(bc * bc + bs * bs)
+            if mag > 10.0:   # skip low-energy (background) blocks
+                block_angles.append(0.5 * np.arctan2(bs, bc))
+
+    if len(block_angles) < 4:
+        return 50.0   # not enough textured blocks to judge
+
+    angles   = np.array(block_angles)
+    mean_cos = float(np.mean(np.cos(2.0 * angles)))
+    mean_sin = float(np.mean(np.sin(2.0 * angles)))
+    R        = np.sqrt(mean_cos ** 2 + mean_sin ** 2)   # 0-1
+
+    return float(np.clip(R * 100.0, 0.0, 100.0))
+
+
+# ── Ridge clarity score ───────────────────────────────────────────────────────
 
 def _ridge_clarity_score(gray: np.ndarray) -> float:
     """Canny edge density. Ideal fingerprint ~10-20% edge pixels → score 100."""

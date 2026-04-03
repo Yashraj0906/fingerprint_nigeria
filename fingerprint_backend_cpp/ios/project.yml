@@ -1,0 +1,77 @@
+# XcodeGen project definition
+# Generate with: xcodegen generate  (requires xcodegen >= 2.40)
+# CI uses macos-15 runner (Xcode 16) — objectVersion 77 is compatible.
+
+name: FingerprintSDK
+options:
+  bundleIdPrefix: com.yellowsense
+  deploymentTarget:
+    iOS: "13.0"
+  # Let XcodeGen use its default objectVersion (77 = Xcode 16)
+  createIntermediateGroups: true
+
+settings:
+  base:
+    CLANG_CXX_LANGUAGE_STANDARD: c++17
+    CLANG_CXX_LIBRARY: libc++
+    GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) OPENCV_DISABLE_EIGEN_TENSOR_SUPPORT=1"
+    ENABLE_BITCODE: NO
+
+targets:
+  FingerprintSDK:
+    type: framework
+    platform: iOS
+    deploymentTarget: "13.0"
+
+    sources:
+      # Objective-C++ bridge (ios/Classes/)
+      - path: Classes
+        type: group
+
+      # Shared C++ core — ../src relative to ios/ = fingerprint_backend_cpp/src
+      - path: ../src
+        type: group
+        buildPhase: sources
+
+      # C++ headers — ../include relative to ios/ = fingerprint_backend_cpp/include
+      - path: ../include
+        type: group
+        buildPhase: headers
+        headerVisibility: project
+
+    settings:
+      base:
+        PRODUCT_NAME: FingerprintSDK
+        DEFINES_MODULE: YES
+        SKIP_INSTALL: NO
+        BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+        CLANG_ENABLE_MODULES: YES
+
+        # $(PROJECT_DIR) = fingerprint_backend_cpp/ios/ after xcodegen generate
+        HEADER_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/../include"
+          - "$(OPENCV_FRAMEWORK_PATH)/opencv2.framework/Headers"
+
+        # Xcode will search OPENCV_FRAMEWORK_PATH (passed as -build-setting at
+        # xcodebuild time) for opencv2.framework.  No hard-coded path needed here.
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(OPENCV_FRAMEWORK_PATH)"
+
+        OTHER_LDFLAGS:
+          - "-framework opencv2"
+
+        # OpenCV 4.9+ iOS framework only ships arm64 slices (device + arm64-simulator).
+        # x86_64 simulator was dropped. Building both slices causes link failure.
+        ARCHS: arm64
+        VALID_ARCHS: arm64
+
+        # OpenCV internal headers use "..." includes; suppress this from being an error
+        # in framework module builds.
+        CLANG_WARN_NON_MODULAR_INCLUDE_IN_FRAMEWORK: NO
+        OTHER_CFLAGS:
+          - "-Wno-non-modular-include-in-framework-module"
+          - "-Wno-quoted-include-in-framework-header"
+
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO

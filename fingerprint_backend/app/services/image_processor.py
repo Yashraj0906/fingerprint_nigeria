@@ -69,27 +69,70 @@ def detect_ridges(gray: np.ndarray) -> np.ndarray:
 
 # ── Private helpers ───────────────────────────────────────────────────────────
 
+def _estimate_ridge_frequency(gray: np.ndarray) -> float:
+    """
+    Estimate dominant ridge wavelength λ (pixels) via FFT of a central row strip.
+
+    WHY THIS MATTERS:
+    At 25 cm from a webcam the ridge pitch is ~7 px; at 45 cm it's ~14 px.
+    A Gabor filter tuned to the wrong frequency suppresses the very ridges it
+    should enhance.  Measuring the actual frequency and adapting λ per-image
+    keeps the filter matched regardless of capture distance.
+
+    METHOD:
+    - Average a horizontal strip through the image centre → 1-D signal
+    - Remove DC trend, compute RFFT magnitude
+    - Search for the dominant peak in the 5-18 px wavelength band
+    - Require peak ≥ 2× median of that band (SNR guard) before accepting
+    - Fall back to 9.0 px if the image is too uniform or noisy to measure
+    """
+    h, w = gray.shape
+    r1 = h // 3
+    r2 = 2 * h // 3
+    strip = gray[r1:r2, :].mean(axis=0).astype(np.float32)
+    strip -= strip.mean()
+
+    if len(strip) < 16:
+        return 9.0
+
+    fft_mag = np.abs(np.fft.rfft(strip))
+    freqs   = np.fft.rfftfreq(len(strip))
+
+    # Frequency band corresponding to 5-18 px ridge pitch
+    mask = (freqs >= 1.0 / 18.0) & (freqs <= 1.0 / 5.0)
+    if not mask.any():
+        return 9.0
+
+    band       = fft_mag[mask]
+    peak_val   = float(band.max())
+    noise_val  = float(np.median(band))
+
+    if noise_val < 1e-6 or peak_val / noise_val < 2.0:
+        return 9.0  # no clear dominant frequency — fall back
+
+    peak_freq = float(freqs[mask][np.argmax(band)])
+    if peak_freq < 1e-6:
+        return 9.0
+
+    return float(np.clip(1.0 / peak_freq, 5.0, 18.0))
+
+
 def _gabor_bank_enhance(gray: np.ndarray) -> np.ndarray:
     """
-    True Gabor filter bank for fingerprint ridge enhancement.
+    Adaptive Gabor filter bank for fingerprint ridge enhancement.
 
-    WHY GABOR (vs previous Sobel projection):
-    - Gabor = sinusoidal carrier modulated by Gaussian envelope — it's a
-      matched filter for the periodic ridge pattern at a specific frequency.
-    - Sobel just detects edges in one direction; it has no notion of ridge
-      periodicity, so it enhances all edges equally (noise, skin creases, etc.).
-    - Gabor at the right wavelength suppresses noise and non-ridge texture while
-      amplifying the regular ridge-valley alternation.
+    Uses _estimate_ridge_frequency() to measure the actual ridge pitch in
+    the current image and tunes λ accordingly.  Falls back to 9 px when the
+    frequency cannot be reliably estimated.
 
-    PARAMETERS (tuned for contactless webcam at 30-50 cm, HD resolution):
-    - lambd = 9 px  ← typical ridge pitch at this camera-to-finger distance
-    - sigma = 3.5   ← Gaussian envelope width (covers ~1 ridge period)
-    - gamma = 0.5   ← spatial aspect ratio (elongated along ridge direction)
-    - 8 orientations spanning 0°–157.5° covers all possible ridge angles
+    8 orientations at 22.5° intervals cover every possible ridge direction.
+    sigma is set to 0.56 * λ so the Gaussian envelope spans ~1 ridge period,
+    matching the filter bandwidth to the signal.
     """
-    ksize  = 21
-    sigma  = 3.5
-    lambd  = 9.0
+    lambd  = _estimate_ridge_frequency(gray)
+    sigma  = lambd * 0.56   # envelope ≈ 1 ridge period wide
+    ksize  = int(2 * round(3 * sigma) + 1)   # kernel spans ±3σ, always odd
+    ksize  = max(ksize, 11)
     gamma  = 0.5
     psi    = 0.0
 
