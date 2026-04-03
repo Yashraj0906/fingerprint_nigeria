@@ -6,7 +6,8 @@ Pod::Spec.new do |s|
   s.license          = { :type => 'Proprietary' }
   s.author           = { 'YellowSense' => 'dev@yellowsense.in' }
   s.source           = { :path => '.' }
-  s.source_files        = 'Classes/**/*.{h,m,mm,swift,cpp}', 'Classes/Core/**/*.{h,cpp}'
+  # Swift/ObjC sources from all subdirectories; C++ files ONLY from Classes/Core/
+  s.source_files        = 'Classes/**/*.{h,m,mm,swift}', 'Classes/Core/**/*.{h,cpp}'
   s.public_header_files = 'Classes/Bridging/OpenCVWrapper.h', 'Classes/Bridge/FingerprintCoreWrapper.h'
   s.dependency 'Flutter'
   s.dependency 'OpenCV2'

@@ -14,7 +14,11 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++17", "-O3", "-fexceptions", "-frtti"
-                arguments "-DANDROID_STL=c++_shared", "-DOpenCV_DIR=../../../example/android/libs/opencv-sdk/sdk/native/jni"
+                // OPENCV_INCLUDE_DIR: CI sets GITHUB_WORKSPACE; OpenCV is extracted there.
+                // We read it at configuration time; empty string disables it gracefully.
+                def opencvInclude = System.getenv("OPENCV_INCLUDE_DIR") ?: ""
+                arguments "-DANDROID_STL=c++_shared",
+                          "-DOPENCV_INCLUDE_DIR=${opencvInclude}"
                 abiFilters "arm64-v8a", "armeabi-v7a"
             }
         }
