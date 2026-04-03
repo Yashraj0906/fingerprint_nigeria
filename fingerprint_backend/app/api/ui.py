@@ -176,7 +176,7 @@ hr.div{border:none;border-top:1px solid #21262d}
 <body>
 
 <header>
-  <h1>Fingerprint SDK — 4-Finger Live Capture</h1>
+  <h1>Fingerprint SDK — Live Capture</h1>
   <span class="hdr-txn" id="hdrTxn">No session</span>
   <span class="badge" id="liveBadge">LIVE</span>
 </header>
@@ -224,8 +224,13 @@ hr.div{border:none;border-top:1px solid #21262d}
       <div>
         <label>Hand</label>
         <select id="handSel" onchange="resetCapture()">
-          <option value="RIGHT">Right Hand</option>
-          <option value="LEFT">Left Hand</option>
+          <option value="RIGHT_FOUR">Right Hand (4 Fingers)</option>
+          <option value="LEFT_FOUR">Left Hand (4 Fingers)</option>
+          <option value="RIGHT_THUMB">Right Thumb</option>
+          <option value="LEFT_THUMB">Left Thumb</option>
+          <option value="SINGLE_FINGER">Single Finger</option>
+          <option value="CUSTOM_SEQUENCE">Custom Sequence</option>
+          <option value="PARTIAL_CAPTURE">Partial Capture</option>
         </select>
       </div>
 
@@ -244,7 +249,7 @@ hr.div{border:none;border-top:1px solid #21262d}
       <div class="fgrid" id="fgrid"></div>
 
       <div id="okBanner" class="ok-banner" style="display:none">
-        <h2>✓ All 4 fingers captured!</h2>
+        <h2>✓ Captured!</h2>
         <p id="okMsg"></p>
       </div>
 
@@ -317,16 +322,32 @@ hr.div{border:none;border-top:1px solid #21262d}
 // ─────────────────────────────────────────────────────────────────────────────
 const BASE         = window.location.origin;
 const CAPTURE_QUAL = 60;
-const HOLD_FRAMES  = 3;
-const BBOX_PAD     = 45;
+const HOLD_FRAMES  = 2;
+const BBOX_PAD     = 15;
 
-const FINGER_DEFS = [
+let FINGER_DEFS = [];
+const FINGER_DEFS_4 = [
   { key:'INDEX',  ids:[5,6,7,8]    },
   { key:'MIDDLE', ids:[9,10,11,12] },
   { key:'RING',   ids:[13,14,15,16]},
   { key:'LITTLE', ids:[17,18,19,20]},
 ];
-const FINGER_LABEL = {INDEX:'Index',MIDDLE:'Middle',RING:'Ring',LITTLE:'Little'};
+const FINGER_DEFS_THUMB = [
+  { key:'THUMB', ids:[1,2,3,4] },
+];
+const FINGER_DEFS_SINGLE = [
+  { key:'INDEX', ids:[5,6,7,8] },
+];
+const FINGER_DEFS_CUSTOM = [
+  { key:'INDEX', ids:[5,6,7,8] },
+  { key:'LITTLE', ids:[17,18,19,20] },
+];
+const FINGER_DEFS_PARTIAL = [
+  { key:'INDEX', ids:[5,6,7,8] },
+  { key:'MIDDLE', ids:[9,10,11,12] },
+  { key:'LITTLE', ids:[17,18,19,20] },
+];
+const FINGER_LABEL = {THUMB:'Thumb',INDEX:'Index',MIDDLE:'Middle',RING:'Ring',LITTLE:'Little'};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State
@@ -456,16 +477,22 @@ function grabBase64() {
   return scratchCanvas.toDataURL('image/jpeg', 0.82).split(',')[1];
 }
 
+function getHandSide() {
+  const v = document.getElementById('handSel').value;
+  return v.startsWith('LEFT') ? 'LEFT' : 'RIGHT';
+}
+
 async function analyzeLoop() {
   if (!running) return;
   if (analyzing || videoEl.readyState < 2) { setTimeout(analyzeLoop, 100); return; }
   analyzing = true;
 
-  const hand = document.getElementById('handSel').value;
+  const hand = getHandSide();
+  const handSelVal = document.getElementById('handSel').value;
   try {
     const res  = await fetch(BASE + '/api/capture/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_base64: grabBase64(), hand })
+      body: JSON.stringify({ image_base64: grabBase64(), hand, mode: handSelVal })
     });
     const data = await res.json();
     onAnalyzeResult(data);
@@ -473,7 +500,7 @@ async function analyzeLoop() {
     setGuide('Connection error — is the server running?', 'err');
   } finally {
     analyzing = false;
-    if (running) setTimeout(analyzeLoop, 300);  // ~3 fps
+    if (running) setTimeout(analyzeLoop, 150);  // ~6 fps
   }
 }
 
@@ -490,7 +517,7 @@ function onAnalyzeResult(data) {
 
   document.getElementById('scanGuide').className = 'scan-guide ok';
 
-  const hand = document.getElementById('handSel').value;
+  const hand = getHandSide();
   let totalQ = 0, countQ = 0, anyGuide = data.guidance || null;
 
   (data.fingers || []).forEach(f => {
@@ -511,17 +538,18 @@ function onAnalyzeResult(data) {
     totalQ += q; countQ++;
     if (f.guidance && !anyGuide) anyGuide = f.guidance;
 
-    const color = q >= CAPTURE_QUAL ? '#2ecc71' : q >= 40 ? '#f59e0b' : '#ef4444';
+    const isLive = f.liveness === true;
+    const color = (q >= CAPTURE_QUAL && isLive) ? '#2ecc71' : (q >= 40 && isLive) ? '#f59e0b' : '#ef4444';
     if (f.bbox_pct) {
-      const label = q >= CAPTURE_QUAL
+      const label = (q >= CAPTURE_QUAL && isLive)
         ? (streak[key] >= 1 ? key + ' ' + '●'.repeat(streak[key]) + '○'.repeat(HOLD_FRAMES - streak[key]) : key)
-        : key;
+        : (!isLive ? 'FAKE ' + key : key);
       drawBboxPct(f.bbox_pct, color, label, q, false);
     }
 
-    const metrics = { score: q, blur: f.blur_score, illum: f.illum_score, liveness: f.liveness_conf ? f.liveness_conf * 100 : (f.liveness ? 80 : 20) };
+    const metrics = { score: q, blur: f.blur_score, illum: f.illum_score, liveness: f.liveness_conf ? f.liveness_conf * 100 : (f.liveness ? 80 : 20), reason: f.guidance || null };
 
-    if (q >= CAPTURE_QUAL) {
+    if (q >= CAPTURE_QUAL && isLive) {
       streak[key] = (streak[key] || 0) + 1;
       if (streak[key] >= HOLD_FRAMES) {
         // Lock — grab crop from scratch canvas
@@ -529,11 +557,14 @@ function onAnalyzeResult(data) {
         capturedData[key] = { imageDataURL: dataURL, ...metrics, timestamp: Date.now() };
         updateTileCaptured(key, metrics, dataURL);
         if (f.bbox_pct) drawBboxPct(f.bbox_pct, '#2ecc71', 'CAPTURED ' + key, q, true);
-        if (Object.keys(capturedData).length >= 4) setTimeout(onAllCaptured, 100);
+        if (Object.keys(capturedData).length >= 1) {
+            document.getElementById('actionBtns').style.display = 'block';
+        }
+        if (Object.keys(capturedData).length >= FINGER_DEFS.length) setTimeout(onAllCaptured, 100);
       } else {
         updateTileDetecting(key, metrics, 'hold');
       }
-    } else if (q >= 40) {
+    } else if (q >= 40 && isLive) {
       streak[key] = 0;
       updateTileDetecting(key, metrics, 'det');
     } else {
@@ -820,6 +851,15 @@ function cropToDataURL(bbox) {
 function buildGrid(hand) {
   const g = document.getElementById('fgrid');
   g.innerHTML = '';
+  
+  if (hand === 'SINGLE_FINGER') FINGER_DEFS = FINGER_DEFS_SINGLE;
+  else if (hand === 'CUSTOM_SEQUENCE') FINGER_DEFS = FINGER_DEFS_CUSTOM;
+  else if (hand === 'PARTIAL_CAPTURE') FINGER_DEFS = FINGER_DEFS_PARTIAL;
+  else if (hand.includes('THUMB')) FINGER_DEFS = FINGER_DEFS_THUMB;
+  else FINGER_DEFS = FINGER_DEFS_4;
+
+  g.style.gridTemplateColumns = FINGER_DEFS.length === 1 ? '1fr' : '1fr 1fr';
+
   FINGER_DEFS.forEach(({ key }) => {
     g.innerHTML += `
     <div class="ftile" id="tile-${key}">
@@ -899,8 +939,10 @@ function updateTileDetecting(key, metrics, state) {
     chip('LIVE', fmt(metrics.liveness), scCls(metrics.liveness));
 
   const live = metrics.liveness >= 50;
+  const failReason = (!live && metrics.reason) ? metrics.reason : (live ? 'LIVE ✓' : 'FAKE ✗');
+  const shortReason = failReason.length > 35 ? failReason.substring(0, 35) + '…' : failReason;
   document.getElementById('lv-' + key).innerHTML =
-    `<span class="lv-pill ${live?'pass':'fail'}">${live?'LIVE ✓':'GLARE ✗'}</span>` +
+    `<span class="lv-pill ${live?'pass':'fail'}">${live ? 'LIVE ✓' : shortReason}</span>` +
     `<span class="lv-conf">${metrics.liveness.toFixed(0)}%</span>`;
 }
 
@@ -947,7 +989,7 @@ function startCapture() {
   document.getElementById('stopBtn').style.display  = 'block';
   document.getElementById('liveLabel').textContent  = 'DETECTING';
   document.getElementById('liveBadge').classList.add('on');
-  setGuide('Show all 4 fingers flat and point toward camera', 'warn');
+  setGuide('Show your fingers flat and point toward camera', 'warn');
   analyzeLoop();
 }
 
@@ -984,12 +1026,16 @@ function mpLoop() {
 function onAllCaptured() {
   stopCapture();
   const cnt  = Object.keys(capturedData).length;
+  if (cnt === 0) return;
   const avgQ = Object.values(capturedData).reduce((s,r) => s + r.score, 0) / cnt;
   document.getElementById('okBanner').style.display   = 'block';
   document.getElementById('actionBtns').style.display = 'block';
+  
   document.getElementById('okMsg').textContent =
-    cnt + ' fingers captured · Avg quality ' + avgQ.toFixed(1) + '/100';
-  setGuide('All 4 fingers captured! Use actions below.', 'ok');
+    cnt + ' finger' + (cnt > 1 ? 's' : '') + ' captured · Avg quality ' + avgQ.toFixed(1) + '/100';
+    
+  document.getElementById('okBanner').querySelector('h2').textContent = '✓ Capture Complete!';
+  setGuide(cnt + ' fingers captured! Use actions below.', 'ok');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

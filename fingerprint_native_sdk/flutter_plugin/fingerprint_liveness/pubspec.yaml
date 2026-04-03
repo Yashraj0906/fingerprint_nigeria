@@ -1,0 +1,21 @@
+name: fingerprint_liveness
+description: Contactless Fingerprint Liveness Detection SDK — wraps native Android (.aar) and iOS (.xcframework) libraries.
+version: 2.0.0
+homepage: https://github.com/your-org/fingerprint-nigeria
+
+environment:
+  sdk: ">=2.17.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.fingerprintsdk.liveness
+        pluginClass: FingerprintLivenessPlugin
+      ios:
+        pluginClass: FingerprintLivenessPlugin

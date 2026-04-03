@@ -11,4 +11,5 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "sqlalchemy>=2.0.48",
     "uvicorn>=0.42.0",
+    "python-multipart>=0.0.9",
 ]

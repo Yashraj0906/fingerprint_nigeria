@@ -16,6 +16,7 @@ from typing import Optional, Tuple, Dict
 # ── Landmark indices ──────────────────────────────────────────────────────────
 # Each finger: [MCP base, PIP, DIP, TIP]
 _FINGER_LANDMARKS: Dict[str, list] = {
+    "THUMB":  [1, 2, 3, 4],
     "INDEX":  [5, 6, 7, 8],
     "MIDDLE": [9, 10, 11, 12],
     "RING":   [13, 14, 15, 16],
@@ -23,7 +24,7 @@ _FINGER_LANDMARKS: Dict[str, list] = {
 }
 
 # Bounding box padding in pixels
-_BBOX_PADDING = 45
+_BBOX_PADDING = 15
 
 
 # ── Result types ──────────────────────────────────────────────────────────────
@@ -190,7 +191,7 @@ class HandDetector:
         # ── Finger-level guidance ─────────────────────────────────────────────
         missing = [n.capitalize() for n, f in fingers.items() if not f.detected]
         if detected_count == 0:
-            guidance = "Raise all 4 fingers and point them toward the camera"
+            guidance = "Raise your fingers and point them toward the camera"
         elif missing:
             guidance = "Raise your " + ", ".join(missing) + " finger" + ("s" if len(missing) > 1 else "")
         elif not all_vertical:

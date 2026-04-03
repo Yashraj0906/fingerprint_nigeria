@@ -14,19 +14,22 @@ class LivenessResult:
 
 
 # ── Thresholds (tuned for CONTACTLESS WEBCAM at 30-50 cm) ─────────────────────
-_GLARE_RATIO_MAX        = 0.15   # >15% saturated-white pixels → screen replay
-_LBP_VAR_MIN            = 5.5    # real webcam skin ≈ 6-30, screen replay ≈ 2-5
+_GLARE_RATIO_MAX        = 0.18   # >18% saturated-white pixels → screen replay
+_LBP_VAR_MIN            = 5.0    # real webcam skin ≈ 6-30; screen replay ≈ 2-5
 _SKIN_RATIO_MIN         = 0.10   # at least 10% of crop must be skin-tone pixels
-_MOIRE_SCORE_MAX        = 0.70   # DFT periodicity (P95/median based)
-_MOLD_CR_STD_MIN        = 3.5    # real skin Cr variance > 10.0 due to blood; molds are painted/flat
+_MOIRE_SCORE_MAX        = 0.72   # DFT periodicity — balanced for real skin edge fingers
+_MOLD_CR_STD_MIN        = 2.5    # real skin Cr variance; lowered for small edge-finger crops
 _RIDGE_BAND_RATIO_MIN   = 0.08   # ridges invisible at webcam distance
 _REFLECTION_STD_MIN     = 2.0    # webcam finger crops have uniform lighting
 _CONFIDENCE_FLOOR       = 0.30   # never return confidence below this for detected hands
 _SPECTRAL_DECAY_MAX     = 0.25   # natural images high-mid ratio < 0.25 (AI flatter decay > 0.30)
+_GRAD_KURTOSIS_MIN      = 1.8    # real skin gradient kurtosis > 3; screens ≈ 0.5-1.5
+_COLOR_CORR_MIN         = 0.60   # R-G-B noise correlation; real > 0.70; screen < 0.55
 
 
 def evaluate(gray: np.ndarray, hand: HandDetectionResult,
-             bgr: Optional[np.ndarray] = None) -> LivenessResult:
+             bgr: Optional[np.ndarray] = None,
+             hand_mode: str = "") -> LivenessResult:
     """
     9-layer contactless liveness & deepfake check — calibrated for webcam captures.
 
@@ -62,7 +65,7 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
     # Real skin has blood beneath the surface causing variations in the Red channel 
     # (Sub-surface scattering). Physical PlayDoh/Silicone molds are painted a 
     # flat, lifeless color. We measure the variance of the Cr (Red-Chroma) channel.
-    if bgr is not None:
+    if bgr is not None and bgr.shape[0] >= 40 and bgr.shape[1] >= 40:
         ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
         cr_channel = ycrcb[:, :, 1]
         cr_std = np.std(cr_channel)
@@ -88,15 +91,31 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
             is_ai_generated=True
         )
 
-    # ── Layer 9: Anatomical Sanity Check (Deepfake Geometry) 
-    anatomy_ok = _anatomical_sanity_check(hand)
-    if not anatomy_ok:
-        return LivenessResult(
-            passed=False,
-            reason="Deepfake detected — anatomical anomaly",
-            confidence=0.10,
-            is_ai_generated=True
-        )
+    # ── Layer 9: Anatomical Sanity Check ──────────────────────────────────────
+    # Only run this if we are expecting a full hand (not a single thumb where the
+    # middle finger is tucked away or distorted).
+    if "THUMB" not in hand_mode and "SINGLE" not in hand_mode:
+        sane_anatomy = _anatomical_sanity_check(hand)
+        if not sane_anatomy:
+            return LivenessResult(
+                passed=False,
+                reason="Deepfake detected — anatomical anomaly in finger length",
+                confidence=0.10,
+                is_ai_generated=True
+            )
+
+    # ── Layer 11: Screen Sub-Pixel / Backlight Detection ──────────────────────
+    # Phone/laptop screens have a regular pixel grid that creates distinctive
+    # gradient patterns. Real 3D skin has natural, irregular gradient distributions.
+    if bgr is not None:
+        screen_detected, screen_reason = _screen_replay_detection(gray, bgr)
+        if screen_detected:
+            return LivenessResult(
+                passed=False,
+                reason=screen_reason,
+                confidence=0.15,
+                is_ai_generated=False
+            )
 
     # ── Layer 2: Screen-replay glare guard ────────────────────────────────────
     _, bright_mask = cv2.threshold(gray, 245, 255, cv2.THRESH_BINARY)
@@ -185,7 +204,6 @@ def evaluate(gray: np.ndarray, hand: HandDetectionResult,
         )
 
     return LivenessResult(passed=True, reason=None, confidence=confidence)
-
 
 # ── Layer 3 helper: local texture variance (LBP proxy) ───────────────────────
 
@@ -390,6 +408,85 @@ def _anatomical_sanity_check(hand: HandDetectionResult) -> bool:
         return False
 
     return True
+
+
+# ── Layer 11 helper: Screen Replay Detection ─────────────────────────────────
+
+def _screen_replay_detection(gray: np.ndarray, bgr: np.ndarray) -> tuple:
+    """
+    Multi-check screen replay detector (optimized for speed + sub-pixel accuracy).
+    Runs on a center CROP (not downscaled) to preserve display sub-pixel noise
+    patterns while minimizing computation.
+    """
+    h, w = gray.shape[:2]
+    if h < 64 or w < 64:
+        return False, None
+    
+    # ── Take a 100x100 center crop (or smaller if image is small) ─────────────
+    crop_size = min(100, h, w)
+    cy, cx = h // 2, w // 2
+    r_half = crop_size // 2
+    gray_sm = gray[cy - r_half: cy + r_half, cx - r_half: cx + r_half]
+    bgr_sm = bgr[cy - r_half: cy + r_half, cx - r_half: cx + r_half]
+
+    # ── Check 1: Gradient Kurtosis (fast on center crop) ─────────────────────
+    sobelx = cv2.Sobel(gray_sm, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(gray_sm, cv2.CV_64F, 0, 1, ksize=3)
+    grad_mag = np.sqrt(sobelx**2 + sobely**2)
+    mean_g = np.mean(grad_mag)
+    std_g  = np.std(grad_mag)
+    if std_g > 1e-6:
+        kurtosis = float(np.mean(((grad_mag - mean_g) / std_g) ** 4) - 3.0)
+        if kurtosis < 2.0:  # Tightened from 1.8 to catch retina screens
+            return True, "Screen replay detected \u2014 unnatural gradient pattern"
+
+    # ── Check 2: Color Channel Noise Correlation (fast on center crop) ────────
+    b_ch = bgr_sm[:, :, 0].astype(np.float32)
+    g_ch = bgr_sm[:, :, 1].astype(np.float32)
+    r_ch = bgr_sm[:, :, 2].astype(np.float32)
+    b_noise = b_ch - cv2.GaussianBlur(b_ch, (5, 5), 0)
+    g_noise = g_ch - cv2.GaussianBlur(g_ch, (5, 5), 0)
+    r_noise = r_ch - cv2.GaussianBlur(r_ch, (5, 5), 0)
+
+    def _corr(a, b):
+        a_flat, b_flat = a.ravel(), b.ravel()
+        if np.std(a_flat) < 1e-6 or np.std(b_flat) < 1e-6:
+            return 1.0
+        return float(np.corrcoef(a_flat, b_flat)[0, 1])
+
+    avg_corr = (_corr(r_noise, g_noise) + _corr(g_noise, b_noise)) / 2.0
+    if avg_corr < 0.65:  # Tightened slightly to block retina displays
+        return True, "Screen replay detected \u2014 decorrelated color channel noise"
+
+    # ── Check 3: Blur/Sharpness Uniformity (catch flat screens) ───────────────
+    lap_var = cv2.Laplacian(gray_sm, cv2.CV_64F).var()
+    if lap_var < 50.0:
+        return True, "Screen replay detected \u2014 missing 3D surface detail"
+        
+    # ── Check 4: High-Frequency Cross Energy (Phone Pixel Grid) ───────────────
+    # A phone's LCD/OLED pixel matrix creates strong horizontal and vertical 
+    # spikes in the 2D frequency spectrum. Real skin has isotropic (circular) energy.
+    f = np.fft.fft2(gray_sm.astype(np.float32))
+    fshift = np.fft.fftshift(f)
+    mag = np.abs(fshift)
+    cy, cx = mag.shape[0] // 2, mag.shape[1] // 2
+    
+    # Blank out the low frequencies (DC component + low frequencies)
+    cv2.circle(mag, (cx, cy), 15, 0, -1)
+    
+    # Calculate energy on the primary axes (cross) vs the rest of the high-frequencies
+    h_strip = mag[cy-2:cy+3, :]
+    v_strip = mag[:, cx-2:cx+3]
+    cross_energy = float(np.sum(h_strip)) + float(np.sum(v_strip))
+    total_energy = float(np.sum(mag))
+    
+    if total_energy > 1e-6:
+        # If the cross dominates the spectrum, it's a grid (screen)
+        grid_ratio = cross_energy / total_energy
+        if grid_ratio > 0.40:  # Strong orthogonal harmonics
+            return True, "Screen replay detected \u2014 pixel grid harmonics"
+
+    return False, None
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
