@@ -38,7 +38,7 @@ dependencies {
     implementation 'androidx.camera:camera-view:1.3.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
-    // OpenCV — published to a local Maven repo by CI; coordinates match what the
-    // workflow publishes at $rootDir/libs-repo (see .github/workflows/build-sdks.yml).
+    // OpenCV — resolved via mavenLocal() in settings.gradle.
+    // CI publishes opencv-4.8.0.aar to Maven Local before building.
     implementation 'org.opencv:opencv:4.8.0'
 }

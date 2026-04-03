@@ -27,6 +27,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
+          cache-disabled: true
 
       - name: Install Flutter
         uses: subosito/flutter-action@v2
@@ -91,8 +92,8 @@ jobs:
           AAR=$(find /tmp/OpenCV-android-sdk/sdk -name "*.aar" | head -1)
           echo "Found AAR: $AAR"
 
-          # AGP forbids local .aar dependencies in library projects. Publish to
-          # Maven Local so fingerprint_sdk can resolve org.opencv:opencv:4.8.0.
+          # Publish to Maven Local — fingerprint_sdk/android/settings.gradle already
+          # declares mavenLocal() so this will be resolved when building standalone.
           MVNLOC="$HOME/.m2/repository/org/opencv/opencv/4.8.0"
           mkdir -p "$MVNLOC"
           cp "$AAR" "$MVNLOC/opencv-4.8.0.aar"
@@ -106,22 +107,31 @@ jobs:
             <packaging>aar</packaging>
           </project>
           MAVENPOM
-
-          # Gradle init script: add mavenLocal() to ALL project repositories so
-          # the fingerprint_sdk subproject (built via example app) finds OpenCV.
-          mkdir -p "$HOME/.gradle"
-          cat > "$HOME/.gradle/init.gradle" << 'INITSCRIPT'
-          allprojects {
-            repositories { mavenLocal() }
-          }
-          INITSCRIPT
-
           echo "OpenCV published to Maven Local: $MVNLOC/opencv-4.8.0.aar"
 
       - name: Build fingerprint_sdk release AAR (via example app Gradle)
         working-directory: fingerprint-sdk/example/android
         run: |
           chmod +x gradlew
+
+          # Flutter 3.41+ no longer generates dependencyResolutionManagement.
+          # Append one with mavenLocal() so OpenCV is resolved from Maven Local.
+          cat > patch_settings.py << 'EOF'
+          import re, sys, os
+          path = 'settings.gradle.kts'
+          if not os.path.exists(path):
+              print('No settings.gradle.kts found, skipping'); sys.exit(0)
+          txt = open(path).read()
+          txt = txt.replace('RepositoriesMode.FAIL_ON_PROJECT_REPOS', 'RepositoriesMode.PREFER_SETTINGS')
+          if 'dependencyResolutionManagement' in txt:
+              txt = re.sub(r'(dependencyResolutionManagement\b.*?repositories\s*\{)', r'\1\n        mavenLocal()', txt, count=1, flags=re.DOTALL)
+          else:
+              txt += '\ndependencyResolutionManagement {\n    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\n    repositories {\n        mavenLocal()\n        google()\n        mavenCentral()\n    }\n}\n'
+          open(path, 'w').write(txt)
+          print('=== Patched settings.gradle.kts ==='); print(txt)
+          EOF
+          sed -i 's/^          //' patch_settings.py
+          python3 patch_settings.py
           ./gradlew :fingerprint_sdk:assembleRelease --no-daemon
 
       - name: Upload AAR artifact
