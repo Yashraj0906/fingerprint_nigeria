@@ -1,4 +1,5 @@
 #pragma once
+#include <opencv2/core.hpp>
 #include "image_processor.h"
 #include "quality_analyzer.h"
 #include "liveness_detector.h"

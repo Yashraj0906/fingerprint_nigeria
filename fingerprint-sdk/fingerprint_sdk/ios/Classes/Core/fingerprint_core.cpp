@@ -1,4 +1,6 @@
 #include "fingerprint_core.h"
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 #include "quality_analyzer.h"
 #include "liveness_detector.h"
 #include "template_encoder.h"

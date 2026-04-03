@@ -1,5 +1,5 @@
 #import "FingerprintCoreWrapper.h"
-#import "fingerprint_core.h"
+#import "../Core/fingerprint_core.h"  // Direct relative path for CI safety
 #import "OpenCVWrapper.h"
 
 // Include only what we actually use. Full opencv.hpp pulls in stitching headers

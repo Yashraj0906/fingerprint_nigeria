@@ -2,6 +2,8 @@
 // Objective-C++ implementation — bridges OpenCV C++ to Swift.
 
 #import "OpenCVWrapper.h"
+#import "../Core/quality_analyzer.h"
+#import "../Core/image_processor.h"
 
 // Import only what we use — avoids stitching headers that conflict with
 // Objective-C's NO macro (enum { NO, GAIN, ... } in exposure_compensate.hpp).
