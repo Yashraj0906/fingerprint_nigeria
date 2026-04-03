@@ -91,8 +91,8 @@ jobs:
           }
           EOF
           
-          # 3. Fix namespace required by AGP 8.x
-          sed -i 's/apply plugin: '"'"'com.android.library'"'"'/apply plugin: '"'"'com.android.library'"'"'\n\nandroid {\n    namespace "org.opencv"\n}/g' sdk/build.gradle
+          # 3. Fix namespace and missing features required by AGP 8.x
+          sed -i 's/apply plugin: '"'"'com.android.library'"'"'/apply plugin: '"'"'com.android.library'"'"'\n\nandroid {\n    namespace "org.opencv"\n    buildFeatures {\n        buildConfig = true\n        aidl = true\n    }\n}/g' sdk/build.gradle
           
           echo "Building OpenCV AAR..."
           gradle :sdk:assembleRelease
