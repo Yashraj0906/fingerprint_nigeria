@@ -1,5 +1,7 @@
 #pragma once
-#include <opencv2/opencv.hpp>
+// Use targeted includes to avoid ObjC 'NO' macro conflict with stitching headers
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #include <string>
 #include <vector>
 
