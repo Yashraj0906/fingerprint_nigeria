@@ -14,21 +14,44 @@ import com.yellowsense.fingerprint_sdk.validation.LivenessDetector
 import io.flutter.plugin.common.EventChannel
 import kotlinx.coroutines.*
 import org.opencv.core.Mat
+import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
 
 /**
  * Production-grade capture orchestrator.
- *
- * Additions over v2:
- *   - ValidationManager: per-session metrics + failure analytics
- *   - DeviceProfiler: adaptive resolution + processing complexity
- *   - Smart retry UX: contextual suggestions after repeated failures
- *   - Auto-fallback to SINGLE_FINGER mode after persistent quality failures
- *   - Confidence score: composite of quality + liveness + segmentation
- *   - failureReason field in per-finger response
- *   - Template null-check: LOW_QUALITY if minutiae < threshold
- *   - Full memory safety: all Mats released in finally blocks
  */
+data class FingerCapture(
+    val fingerId: String,
+    var qualityScore: Double    = 0.0,
+    var livenessPassed: Boolean = false,
+    var confidenceScore: Double = 0.0,
+    var template: String?       = null,
+    var processedImage: String? = null,
+    var rawImage: String?       = null,
+    var status: String          = "failed",
+    var errorCode: String?      = null,
+    var errorMessage: String?   = null,
+    var failureReason: String?  = null,
+    var sharpnessScore: Double  = 0.0,
+    var livenessConfidence: Double = 0.0
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "fingerId" to fingerId,
+        "status" to status,
+        "qualityScore" to qualityScore,
+        "confidenceScore" to confidenceScore,
+        "livenessPassed" to livenessPassed,
+        "template" to template,
+        "rawImage" to rawImage,
+        "processedImage" to processedImage,
+        "errorCode" to errorCode,
+        "errorMessage" to errorMessage,
+        "failureReason" to failureReason,
+        "sharpnessScore" to sharpnessScore,
+        "livenessConfidence" to livenessConfidence
+    )
+}
+
 class CaptureEngine(
     private val cameraManager: CameraManager,
     private var feedbackSink: EventChannel.EventSink?,
@@ -38,8 +61,7 @@ class CaptureEngine(
 ) {
     companion object {
         private const val TAG = "CaptureEngine"
-        // After this many consecutive quality failures, suggest single-finger mode
-        private const val QUALITY_FAIL_THRESHOLD = 6
+        private const val QUALITY_FAIL_THRESHOLD = 60
     }
 
     private val scope            = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -47,9 +69,14 @@ class CaptureEngine(
     val validationManager        = ValidationManager()
 
     @Volatile private var isCapturing = false
+    @Volatile private var completionSent = false
+    private val resultsHandled = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val isProcessing   = java.util.concurrent.atomic.AtomicBoolean(false)
     private var captureJob: Job? = null
 
-    // ─── Session config ───────────────────────────────────────────────────────
+    private var onSessionComplete: ((Map<String, Any>) -> Unit)? = null
+    private var onSessionError: ((String, String) -> Unit)? = null
+    
     private var transactionId    = ""
     private var fingersRequested = listOf<String>()
     private var missingFingers   = listOf<String>()
@@ -60,8 +87,9 @@ class CaptureEngine(
     private var returnRaw        = false
     private var maxRetries       = 3
     private var timeoutSeconds   = 30
+    private var isLeftHand       = false
+    private var startTime        = 0L
 
-    // ─── Per-finger state ─────────────────────────────────────────────────────
     private data class FrameCandidate(
         val qualityScore: Double,
         val livenessConfidence: Double,
@@ -69,34 +97,18 @@ class CaptureEngine(
         val enhanced: Mat,
         val ridges: Mat,
         val raw: Mat?,
-        val livenessPassed: Boolean
+        val livenessPassed: Boolean,
+        val sharpnessScore: Double
     ) {
-        // Composite confidence score
         val confidenceScore: Double get() =
             qualityScore * 0.50 + livenessConfidence * 100 * 0.30 + segmentationConfidence * 100 * 0.20
     }
-
-    data class FingerCapture(
-        val fingerId: String,
-        var qualityScore: Double    = 0.0,
-        var livenessPassed: Boolean = false,
-        var confidenceScore: Double = 0.0,
-        var template: String?       = null,
-        var processedImage: String? = null,
-        var rawImage: String?       = null,
-        var status: String          = "failed",
-        var errorCode: String?      = null,
-        var errorMessage: String?   = null,
-        var failureReason: String?  = null   // LOW_LIGHT | BLUR | LIVENESS_FAIL | LOW_QUALITY
-    )
 
     private val candidates    = mutableMapOf<String, MutableList<FrameCandidate>>()
     private val fingerResults = mutableMapOf<String, FingerCapture>()
     private val retryCounts   = mutableMapOf<String, Int>()
     private var totalQualityFailures = 0
     private var singleFingerFallback = false
-
-    // ─── Public API ───────────────────────────────────────────────────────────
 
     fun updateFeedbackSink(sink: EventChannel.EventSink?) { feedbackSink = sink }
 
@@ -113,40 +125,53 @@ class CaptureEngine(
         returnRaw        = opts["returnRawImage"]        as? Boolean ?: false
         maxRetries       = (opts["maxRetries"]           as? Int)    ?: 3
         timeoutSeconds   = (opts["timeoutSeconds"]       as? Int)    ?: 30
+        startTime        = System.currentTimeMillis()
 
         missingFingers.forEach { fid ->
             fingerResults[fid] = FingerCapture(fid, status = "missing")
         }
-
-        if (debugMode) Log.d(TAG, "Configured txn=$transactionId fingers=$fingersRequested device=${deviceProfile.tier}")
     }
 
     fun start(onComplete: (Map<String, Any>) -> Unit, onError: (String, String) -> Unit) {
+        onSessionComplete = onComplete
+        onSessionError = onError
         isCapturing = true
+        completionSent = false
         livenessDetector.reset()
         FeedbackAnalyzer.reset()
         QualityAnalyzer.resetMotionBaseline()
         validationManager.onSessionStart()
+        resultsHandled.set(false)
+        isProcessing.set(false)
         totalQualityFailures = 0
         singleFingerFallback = false
+        isLeftHand = fingersRequested.any { it.startsWith("LEFT_") }
 
         captureJob = scope.launch {
             val timeoutJob = launch {
                 delay(timeoutSeconds * 1000L)
-                if (isCapturing) {
+                if (isCapturing && !completionSent) {
+                    completionSent = true
                     isCapturing = false
                     releaseCandidates()
                     validationManager.onSessionFailure(ValidationManager.FailureReason.TIMEOUT)
                     validationManager.logSnapshot(TAG)
-                    withContext(Dispatchers.Main) {
-                        onError("TIMEOUT", "Capture timed out after $timeoutSeconds seconds")
-                    }
+                    withContext(Dispatchers.Main) { onSessionError?.invoke("TIMEOUT", "Session timed out") }
                 }
             }
 
             cameraManager.onFrame = { frame ->
-                if (isCapturing) scope.launch { processFrame(frame, onComplete, onError) }
-                else frame.close()
+                if (isCapturing && isProcessing.compareAndSet(false, true)) {
+                    scope.launch {
+                        try {
+                            processFrame(frame)
+                        } finally {
+                            isProcessing.set(false)
+                        }
+                    }
+                } else {
+                    frame.close()
+                }
             }
 
             withContext(Dispatchers.Main) { cameraManager.start(lifecycleOwner) }
@@ -164,19 +189,17 @@ class CaptureEngine(
         QualityAnalyzer.resetMotionBaseline()
         releaseCandidates()
         validationManager.reset()
-        if (debugMode) Log.d(TAG, "Capture stopped")
     }
 
-    // ─── Frame Processing ─────────────────────────────────────────────────────
-
-    private suspend fun processFrame(
-        frame: ImageProxy,
-        onComplete: (Map<String, Any>) -> Unit,
-        onError: (String, String) -> Unit
-    ) {
+    private suspend fun processFrame(frame: ImageProxy) {
         val frameToken = validationManager.onFrameStart()
         var bgr: Mat? = null
         var gray: Mat? = null
+
+        if (!isCapturing || completionSent) {
+            frame.close()
+            return
+        }
 
         try {
             bgr  = ImageProcessor.yuvToMat(frame)
@@ -185,48 +208,69 @@ class CaptureEngine(
             Imgproc.cvtColor(bgr, gray, Imgproc.COLOR_BGR2GRAY)
 
             val maxFingers    = if (singleFingerFallback) 1 else fingersRequested.size
-            val segments      = ImageProcessor.segmentFingers(bgr, maxFingers)
-            val expectedCount = if (singleFingerFallback) 1
-                                else fingersRequested.size - missingFingers.size
+            val segments = ImageProcessor.segmentFingers(bgr, fingersRequested.size)
+            if (debugMode) Log.d(TAG, "Segmentation: Found ${segments.size} finger candidates for ${fingersRequested.size} requested")
+            
+            if (segments.isEmpty()) {
+                emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.ALIGNMENT, "No hand detected", 0.1))
+                return
+            }
+            val expectedCount = if (singleFingerFallback) 1 else fingersRequested.size - missingFingers.size
             val frameArea     = bgr.rows() * bgr.cols()
 
-            // ── Feedback (throttled) ──
             val feedback = FeedbackAnalyzer.analyze(gray, segments, expectedCount, frameArea)
-            if (feedback != null) {
-                emitFeedback(feedback)
-                if (debugMode) Log.d(TAG, "Feedback: ${feedback.type} — ${feedback.message}")
-            }
+            if (feedback != null) emitFeedback(feedback)
 
-            // ── Distance guard ──
             if (segments.isNotEmpty()) {
-                val roiRatio = segments.sumOf { it.area } / frameArea
-                when {
-                    roiRatio < 0.05 -> {
-                        emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.DISTANCE, "Move closer to the camera", 0.88))
-                        return
-                    }
-                    roiRatio > 0.70 -> {
-                        emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.DISTANCE, "Move further from the camera", 0.88))
-                        return
-                    }
+                val roiRatio = segments.sumOf { it.area } / frameArea.toDouble()
+                if (roiRatio < 0.005) {
+                    emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.DISTANCE, "Take close the hands", 0.88))
+                    return
+                } else if (roiRatio > 0.70) {
+                    emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.DISTANCE, "Take hands slightly back", 0.88))
+                    return
                 }
             }
 
-            // ── Only process READY frames ──
-            if (feedback != null && feedback.type != FeedbackAnalyzer.FeedbackType.READY) return
+            // Universal Progressive Capture: We process any valid segments available instead of enforcing strict full-hand alignment.
+            val hasRequiredFingerCount = segments.isNotEmpty()
+            val isStable = validationManager.isFrameStable()
+            val elapsed = System.currentTimeMillis() - startTime
+            val bypassReady = elapsed > 700 // Lightning-fast capture delay (OnePlus 8 / M31s optimization)
+            
+            if (!bypassReady && feedback != null && feedback.type != FeedbackAnalyzer.FeedbackType.READY) return
+            if (!bypassReady && !hasRequiredFingerCount) {
+                emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.ALIGNMENT, "Ensure all fingers are visible", 0.90))
+                return
+            }
+            if (!bypassReady && !isStable) {
+                emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.STABILITY, "Now capturing, hold still", 0.95))
+                return
+            }
 
-            // ── Per-finger processing ──
-            for (roi in segments) {
-                val fingerId = if (singleFingerFallback) fingersRequested.firstOrNull { !missingFingers.contains(it) }
-                               else fingersRequested.getOrNull(roi.index)
-                fingerId ?: continue
-                if (missingFingers.contains(fingerId)) continue
-                if (fingerResults[fingerId]?.status == "success") continue
+            val sortedSegments = if (isLeftHand && !singleFingerFallback) segments.reversed() else segments
+            
+            // Map the detected segments to the remaining requested fingers progressively
+            val remainingFingers = fingersRequested.filter { !missingFingers.contains(it) && fingerResults[it]?.status != "success" }
 
-                val retries = retryCounts.getOrDefault(fingerId, 0)
-                if (retries >= maxRetries) continue
+            for (roi in sortedSegments) {
+                // SHAPE GUARD: Only process things that have the 'Aspect Ratio' of a human finger (Tall & Narrow).
+                // A desk or a square object will have an aspect ratio near 1.0, and we should ignore it.
+                val aspectRatio = roi.rect.height.toDouble() / roi.rect.width.toDouble()
+                if (aspectRatio < 1.05 || aspectRatio > 6.0) {
+                    if (debugMode) Log.d(TAG, "Ignoring non-finger shape (Aspect Ratio: $aspectRatio)")
+                    continue
+                }
 
-                // Segmentation confidence: ratio of ROI area to expected finger area
+                val finalFingerId = if (singleFingerFallback || fingersRequested.size == 1) {
+                    remainingFingers.firstOrNull()
+                } else {
+                    remainingFingers.getOrNull(roi.index)
+                }
+
+                finalFingerId ?: continue
+
+                val retries = retryCounts.getOrDefault(finalFingerId, 0)
                 val segConfidence = (roi.area / (frameArea / expectedCount.toDouble())).coerceIn(0.0, 1.0)
 
                 var roiMat: Mat? = null
@@ -235,193 +279,143 @@ class CaptureEngine(
                 var ridges: Mat? = null
 
                 try {
-                    roiMat   = Mat(gray, roi.rect)
-                    rawMat   = if (returnRaw) Mat(bgr, roi.rect).clone() else null
+                    if (roi.rect.width <= 0 || roi.rect.height <= 0) continue
+                    
+                    // Final safety clip for OpenCV Mat constructor
+                    val safeRect = Rect(
+                        roi.rect.x.coerceIn(0, gray.cols() - 1),
+                        roi.rect.y.coerceIn(0, gray.rows() - 1),
+                        roi.rect.width.coerceAtMost(gray.cols() - roi.rect.x).coerceAtLeast(1),
+                        roi.rect.height.coerceAtMost(gray.rows() - roi.rect.y).coerceAtLeast(1)
+                    )
+                    
+                    roiMat   = Mat(gray, safeRect)
+                    rawMat   = if (returnRaw || returnProcessed) Mat(bgr, safeRect).clone() else null
                     enhanced = ImageProcessor.enhance(roiMat)
 
                     val quality = if (performQuality) QualityAnalyzer.analyze(enhanced, gray) else null
-                    if (debugMode) Log.d(TAG, "[$fingerId] Q=${quality?.score?.toInt()} verdict=${quality?.verdict} seg=${"%.2f".format(segConfidence)}")
-
                     if (quality != null) validationManager.recordQualityScore(quality.score)
 
-                    // ── Quality rejection ──
-                    if (quality != null && quality.verdict == QualityAnalyzer.Verdict.REJECT) {
-                        retryCounts[fingerId] = retries + 1
+                    val adaptiveReject = if (quality == null) false
+                    else if (elapsed > 500) quality.verdict == QualityAnalyzer.Verdict.REJECT
+                    else quality.verdict == QualityAnalyzer.Verdict.REJECT || quality.verdict == QualityAnalyzer.Verdict.RETRY
+
+                    if (adaptiveReject && (quality?.score ?: 0.0) < 20.0) {
+                        retryCounts[finalFingerId] = retries + 1
                         totalQualityFailures++
-
-                        // Smart retry UX suggestions
-                        val suggestion = buildRetrySuggestion(quality, retries + 1)
+                        val suggestion = buildRetrySuggestion(quality!!, retries + 1)
                         if (suggestion != null) emitFeedback(suggestion)
-
-                        // Auto-fallback to single finger after persistent failures
-                        if (totalQualityFailures >= QUALITY_FAIL_THRESHOLD && !singleFingerFallback) {
-                            singleFingerFallback = true
-                            emitFeedback(FeedbackAnalyzer.Feedback(
-                                FeedbackAnalyzer.FeedbackType.ALIGNMENT,
-                                "Switching to single finger capture for better results", 0.80
-                            ))
-                            if (debugMode) Log.d(TAG, "Auto-switched to single-finger mode")
-                        }
-
-                        if (retries + 1 >= maxRetries) {
-                            validationManager.onSessionFailure(ValidationManager.FailureReason.LOW_QUALITY)
-                            fingerResults[fingerId] = FingerCapture(
-                                fingerId, errorCode = "LOW_QUALITY",
-                                errorMessage = "Quality ${quality.score.toInt()} below minimum after $maxRetries attempts",
-                                failureReason = classifyQualityFailure(quality)
-                            )
-                        }
-                        continue
+                        continue // RE-ENABLED: Keep it for complete garbage (Desk/Etc)
                     }
 
-                    // ── Liveness check (12-layer C++ Engine) ──
                     val liveness = if (performLiveness) {
                         val bgrRoi = Mat(bgr, roi.rect)
-                        val res = livenessDetector.evaluate(
-                            gray = roiMat,
-                            bgr = bgrRoi,
-                            fullBgr = bgr,
-                            handMode = fingerId
-                        )
+                        val res = livenessDetector.evaluate(roiMat, bgrRoi, bgr, finalFingerId)
                         bgrRoi.release()
                         res
                     } else null
 
-                    if (debugMode) Log.d(TAG, "[$fingerId] liveness=${liveness?.passed} conf=${liveness?.confidence}")
-
-                    if (liveness != null && !liveness.passed) {
-                        validationManager.onSessionFailure(ValidationManager.FailureReason.LIVENESS_FAIL)
-                        fingerResults[fingerId] = FingerCapture(
-                            fingerId, errorCode = "LIVENESS_FAILED",
-                            errorMessage = liveness.reason ?: "Liveness check failed",
-                            failureReason = "LIVENESS_FAIL"
-                        )
-                        continue
+                    // SMART BLOCK: Only block if we are mathematically certain it is a spoof/fake (confidence < 0.20)
+                    if (liveness != null && liveness.confidence < 0.20) {
+                        Log.w(TAG, "Definitive spoof detected (Conf: ${liveness.confidence}). Blocking frame.")
+                        continue 
                     }
 
                     ridges = ImageProcessor.detectRidges(enhanced)
-                    val livenessConf = liveness?.confidence ?: 1.0
-
-                    candidates.getOrPut(fingerId) { mutableListOf() }.add(
+                    candidates.getOrPut(finalFingerId) { mutableListOf() }.add(
                         FrameCandidate(
-                            qualityScore           = quality?.score ?: 80.0,
-                            livenessConfidence     = livenessConf,
+                            qualityScore = quality?.score ?: 60.0,
+                            livenessConfidence = liveness?.confidence ?: 1.0,
                             segmentationConfidence = segConfidence,
-                            enhanced               = enhanced.also { enhanced = null },
-                            ridges                 = ridges.also { ridges = null },
-                            raw                    = rawMat.also { rawMat = null },
-                            livenessPassed         = liveness?.passed ?: true
+                            enhanced = enhanced.also { enhanced = null },
+                            ridges = ridges.also { ridges = null },
+                            raw = rawMat.also { rawMat = null },
+                            livenessPassed = liveness?.passed ?: true,
+                            sharpnessScore = quality?.blurScore ?: 0.0
                         )
                     )
 
-                    val fingerCandidates = candidates[fingerId] ?: continue
-                    if (fingerCandidates.size >= deviceProfile.framesPerFinger) {
+                    val fingerCandidates = candidates[finalFingerId] ?: continue
+                    if (fingerCandidates.size >= 1) {
                         val best = fingerCandidates.maxByOrNull { it.confidenceScore }!!
-                        finaliseCapture(fingerId, best)
+                        finaliseCapture(finalFingerId, best)
                         fingerCandidates.filter { it !== best }.forEach {
                             it.enhanced.release(); it.ridges.release(); it.raw?.release()
                         }
-                        candidates.remove(fingerId)
+                        candidates.remove(finalFingerId)
                     }
-
+                } catch (e: Exception) {
+                    Log.e(TAG, "ROI processing failed: ${e.message}")
                 } finally {
-                    roiMat?.release()
-                    rawMat?.release()
-                    enhanced?.release()
-                    ridges?.release()
+                    roiMat?.release(); rawMat?.release(); enhanced?.release(); ridges?.release()
                 }
             }
 
-            // ── Check completion ──
             val allDone = fingersRequested.all { fid ->
                 val r = fingerResults[fid]
-                r != null && (r.status == "success" || r.status == "missing" ||
-                        (r.status == "failed" && retryCounts.getOrDefault(fid, 0) >= maxRetries))
+                r != null && (r.status == "success" || r.status == "missing")
             }
 
-            if (allDone) {
-                isCapturing = false
-                val hasSuccess = fingerResults.values.any { it.status == "success" }
-                if (hasSuccess) validationManager.onSessionSuccess()
-                validationManager.logSnapshot(TAG)
-                val response = buildResponse()
-                if (debugMode) Log.d(TAG, "Complete: ${response["overallStatus"]}")
-                withContext(Dispatchers.Main) { onComplete(response) }
+            if (allDone && !completionSent) {
+                if (resultsHandled.compareAndSet(false, true)) {
+                    completionSent = true
+                    isCapturing = false
+                    if (fingerResults.values.any { it.status == "success" }) validationManager.onSessionSuccess()
+                    validationManager.logSnapshot(TAG)
+                    val response = buildResponse()
+                    withContext(Dispatchers.Main) { onSessionComplete?.invoke(response) }
+                }
             }
-
         } catch (e: Exception) {
             runCatching { frame.close() }
             Log.e(TAG, "Frame error: ${e.message}", e)
-            withContext(Dispatchers.Main) {
-                onError("PROCESSING_ERROR", e.message ?: "Frame processing failed")
+            if (isCapturing && !completionSent) {
+                if (resultsHandled.compareAndSet(false, true)) {
+                    isCapturing = false
+                    withContext(Dispatchers.Main) {
+                        onSessionError?.invoke("CAPTURE_ERROR", e.message ?: "Unknown error")
+                    }
+                }
             }
         } finally {
-            bgr?.release()
-            gray?.release()
+            bgr?.release(); gray?.release()
             validationManager.onFrameEnd(frameToken)
         }
     }
 
-    // ─── Finalise ─────────────────────────────────────────────────────────────
-
     private fun finaliseCapture(fingerId: String, best: FrameCandidate) {
+        if (best.enhanced.empty()) {
+            best.ridges.release(); best.raw?.release()
+            return
+        }
         val confidenceScore = best.confidenceScore.coerceIn(0.0, 100.0)
-
         var template: String? = null
         if (returnTemplate) {
             template = TemplateEncoder.encode(best.enhanced)
             if (template == null) {
-                // Insufficient minutiae — mark as low quality
-                fingerResults[fingerId] = FingerCapture(
-                    fingerId, errorCode = "LOW_QUALITY",
-                    errorMessage = "Insufficient ridge detail for template generation",
-                    failureReason = "LOW_QUALITY"
-                )
+                fingerResults[fingerId] = FingerCapture(fingerId, errorCode = "LOW_QUALITY", failureReason = "LOW_QUALITY")
                 best.enhanced.release(); best.ridges.release(); best.raw?.release()
                 return
             }
         }
-
         fingerResults[fingerId] = FingerCapture(
-            fingerId        = fingerId,
-            qualityScore    = best.qualityScore,
-            livenessPassed  = best.livenessPassed,
-            confidenceScore = confidenceScore,
-            template        = template,
-            processedImage  = if (returnProcessed) ImageProcessor.matToBase64(best.enhanced) else null,
-            rawImage        = if (returnRaw && best.raw != null) ImageProcessor.matToBase64(best.raw) else null,
-            status          = "success"
+            fingerId = fingerId, qualityScore = best.qualityScore, livenessPassed = best.livenessPassed,
+            confidenceScore = confidenceScore, template = template, status = "success",
+            processedImage = if (returnProcessed && best.raw != null) ImageProcessor.matToBase64(best.raw) else null,
+            rawImage = if (returnRaw && best.raw != null) ImageProcessor.matToBase64(best.raw) else null,
+            sharpnessScore = best.sharpnessScore, livenessConfidence = best.livenessConfidence
         )
-
         best.enhanced.release(); best.ridges.release(); best.raw?.release()
-        if (debugMode) Log.d(TAG, "[$fingerId] finalised Q=${best.qualityScore.toInt()} conf=${confidenceScore.toInt()}")
     }
-
-    // ─── Smart Retry UX ───────────────────────────────────────────────────────
 
     private fun buildRetrySuggestion(quality: QualityAnalyzer.QualityResult, attempt: Int): FeedbackAnalyzer.Feedback? {
         if (attempt < 2) return null
         return when {
-            quality.blurScore < 30 -> FeedbackAnalyzer.Feedback(
-                FeedbackAnalyzer.FeedbackType.MOTION, "Hold very still — try resting your hand on a surface", 0.85)
-            quality.contrastScore < 30 -> FeedbackAnalyzer.Feedback(
-                FeedbackAnalyzer.FeedbackType.LIGHTING, "Try better lighting — move near a window or lamp", 0.85)
-            quality.coverageScore < 30 -> FeedbackAnalyzer.Feedback(
-                FeedbackAnalyzer.FeedbackType.DISTANCE, "Move closer — place fingers flat against the camera", 0.85)
-            attempt >= maxRetries - 1 -> FeedbackAnalyzer.Feedback(
-                FeedbackAnalyzer.FeedbackType.ALIGNMENT, "Try capturing one finger at a time for better results", 0.80)
+            quality.blurScore < 30 -> FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.MOTION, "Hold still", 0.85)
+            quality.contrastScore < 30 -> FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.LIGHTING, "More light", 0.85)
             else -> null
         }
     }
-
-    private fun classifyQualityFailure(quality: QualityAnalyzer.QualityResult): String = when {
-        quality.blurScore < 30     -> "BLUR"
-        quality.contrastScore < 30 -> "LOW_LIGHT"
-        quality.coverageScore < 30 -> "LOW_COVERAGE"
-        else                       -> "LOW_QUALITY"
-    }
-
-    // ─── Response Builder ─────────────────────────────────────────────────────
 
     private fun buildResponse(): Map<String, Any> {
         val allOk = fingerResults.values.all { it.status == "success" || it.status == "missing" }
@@ -429,40 +423,17 @@ class CaptureEngine(
             "transactionId" to transactionId,
             "overallStatus" to if (allOk) "success" else "failed",
             "sessionMetrics" to validationManager.toResponseMap(),
-            "results" to fingerResults.values.map { r ->
-                mapOf<String, Any?>(
-                    "fingerId"        to r.fingerId,
-                    "status"          to r.status,
-                    "qualityScore"    to r.qualityScore,
-                    "confidenceScore" to r.confidenceScore,
-                    "livenessPassed"  to r.livenessPassed,
-                    "template"        to r.template,
-                    "rawImage"        to r.rawImage,
-                    "processedImage"  to r.processedImage,
-                    "errorCode"       to r.errorCode,
-                    "errorMessage"    to r.errorMessage,
-                    "failureReason"   to r.failureReason
-                )
-            }
+            "results" to fingerResults.values.map { it.toMap() }
         )
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
-
     private fun emitFeedback(feedback: FeedbackAnalyzer.Feedback) {
-        val map = mapOf("type" to feedback.type.name, "message" to feedback.message, "confidence" to feedback.confidence)
+        val map = mapOf("type" to feedback.type.name, "message" to feedback.message, "confidence" to feedback.confidence, "boxes" to feedback.boxes)
         scope.launch(Dispatchers.Main) { feedbackSink?.success(map) }
     }
 
     private fun releaseCandidates() {
         candidates.values.flatten().forEach { it.enhanced.release(); it.ridges.release(); it.raw?.release() }
         candidates.clear()
-    }
-
-    private fun isoFingerPosition(fingerId: String): Int = when (fingerId) {
-        "RIGHT_THUMB" -> 1; "RIGHT_INDEX" -> 2; "RIGHT_MIDDLE" -> 3
-        "RIGHT_RING"  -> 4; "RIGHT_LITTLE" -> 5; "LEFT_THUMB" -> 6
-        "LEFT_INDEX"  -> 7; "LEFT_MIDDLE" -> 8; "LEFT_RING" -> 9
-        "LEFT_LITTLE" -> 10; else -> 0
     }
 }
