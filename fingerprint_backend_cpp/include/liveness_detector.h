@@ -28,6 +28,7 @@ private:
     static bool detectPhoneBezel(const cv::Mat& bgr_full);
     static bool detectScreenReplay(const cv::Mat& gray, const cv::Mat& bgr, std::string& reason);
     static bool detectSpectralDecayAnomaly(const cv::Mat& gray);
+    static double calculateLocalTextureVariance(const cv::Mat& gray);
 };
 
 } // namespace fingerprint
