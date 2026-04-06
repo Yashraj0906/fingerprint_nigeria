@@ -35,7 +35,7 @@ class CameraManager(private val context: Context) {
     var onFrame: ((ImageProxy) -> Unit)? = null
 
     @SuppressLint("UnsafeOptInUsageError")
-    fun start(lifecycleOwner: LifecycleOwner, surfaceProvider: SurfaceProvider? = null) {
+    fun start(lifecycleOwner: LifecycleOwner, surfaceProvider: androidx.camera.core.Preview.SurfaceProvider? = null) {
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             try {

@@ -18,6 +18,7 @@ import org.opencv.android.OpenCVLoader
 
 import io.flutter.view.TextureRegistry
 import androidx.camera.core.Preview.SurfaceProvider
+import androidx.core.content.ContextCompat
 
 class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
@@ -119,7 +120,7 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val surfaceTexture = entry.surfaceTexture()
                 surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
                 val surface = android.view.Surface(surfaceTexture)
-                request.provideSurface(surface, io.flutter.util.ViewUtils.getDirectExecutor()) {
+                request.provideSurface(surface, ContextCompat.getMainExecutor(ctx)) {
                     surface.release()
                 }
             }

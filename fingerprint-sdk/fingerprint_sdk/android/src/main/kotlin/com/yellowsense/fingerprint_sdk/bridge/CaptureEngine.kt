@@ -132,7 +132,7 @@ class CaptureEngine(
         }
     }
 
-    fun start(surfaceProvider: android.androidx.camera.core.Preview.SurfaceProvider? = null, onComplete: (Map<String, Any>) -> Unit, onError: (String, String) -> Unit) {
+    fun start(surfaceProvider: androidx.camera.core.Preview.SurfaceProvider? = null, onComplete: (Map<String, Any>) -> Unit, onError: (String, String) -> Unit) {
         onSessionComplete = onComplete
         onSessionError = onError
         isCapturing = true
