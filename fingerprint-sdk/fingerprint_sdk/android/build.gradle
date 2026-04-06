@@ -1,27 +1,12 @@
 plugins {
     id 'com.android.library'
     id 'org.jetbrains.kotlin.android'
+    id 'dev.flutter.flutter-plugin'
 }
-
-def flutterRoot = System.getenv("FLUTTER_ROOT")
-if (flutterRoot == null) {
-    def properties = new Properties()
-    def propertiesFile = project.rootProject.file('local.properties')
-    if (propertiesFile.exists()) {
-        propertiesFile.withInputStream { properties.load(it) }
-        flutterRoot = properties.getProperty('flutter.sdk')
-    }
-}
-
-if (flutterRoot == null) {
-    throw new GradleException("Flutter SDK not found. Define flutter.sdk in local.properties or set FLUTTER_ROOT env variable.")
-}
-
-apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
 android {
-    compileSdk 34
     namespace "com.yellowsense.fingerprint_sdk"
+    compileSdk 34
 
     defaultConfig {
         minSdk 21
@@ -63,6 +48,12 @@ android {
         release {
             minifyEnabled false
         }
+    }
+}
+
+flutter {
+    plugin {
+        pluginVersion = "1.0.0"
     }
 }
 
