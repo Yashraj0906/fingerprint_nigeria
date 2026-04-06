@@ -124,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fingerprint-sdk-android-aar
-          path: fingerprint-sdk/fingerprint_sdk/android/build/outputs/aar/fingerprint_sdk-release.aar
+          path: fingerprint-sdk/example/build/fingerprint_sdk/outputs/aar/fingerprint_sdk-release.aar
 
       - name: Upload Example APK
         uses: actions/upload-artifact@v4
