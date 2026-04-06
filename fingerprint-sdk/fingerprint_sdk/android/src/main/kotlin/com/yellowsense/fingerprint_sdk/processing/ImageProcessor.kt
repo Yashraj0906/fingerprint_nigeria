@@ -29,133 +29,165 @@ object ImageProcessor {
     private var vBufferData: ByteArray? = null
 
     fun yuvToMat(image: ImageProxy): Mat {
-        val yPlane = image.planes[0]
-        val uPlane = image.planes[1]
-        val vPlane = image.planes[2]
+        try {
+            val yPlane = image.planes[0] ?: return Mat()
+            val uPlane = image.planes[1] ?: return Mat()
+            val vPlane = image.planes[2] ?: return Mat()
 
-        val yBuffer = yPlane.buffer
-        val uBuffer = uPlane.buffer
-        val vBuffer = vPlane.buffer
+            val yBuffer = yPlane.buffer
+            val uBuffer = uPlane.buffer
+            val vBuffer = vPlane.buffer
+            
+            if (yBuffer.remaining() == 0) return Mat()
 
-        val yRem = yBuffer.remaining()
-        if (yBufferData == null || yBufferData!!.size < yRem) yBufferData = ByteArray(yRem)
-        yBuffer.get(yBufferData!!, 0, yRem)
-        
-        val uRem = uBuffer.remaining()
-        if (uBufferData == null || uBufferData!!.size < uRem) uBufferData = ByteArray(uRem)
-        uBuffer.get(uBufferData!!, 0, uRem)
-        
-        val vRem = vBuffer.remaining()
-        if (vBufferData == null || vBufferData!!.size < vRem) vBufferData = ByteArray(vRem)
-        vBuffer.get(vBufferData!!, 0, vRem)
+            val yRem = yBuffer.remaining()
+            if (yBufferData == null || yBufferData!!.size < yRem) yBufferData = ByteArray(yRem)
+            yBuffer.get(yBufferData!!, 0, yRem)
+            
+            val uRem = uBuffer.remaining()
+            if (uBufferData == null || uBufferData!!.size < uRem) uBufferData = ByteArray(uRem)
+            uBuffer.get(uBufferData!!, 0, uRem)
+            
+            val vRem = vBuffer.remaining()
+            if (vBufferData == null || vBufferData!!.size < vRem) vBufferData = ByteArray(vRem)
+            vBuffer.get(vBufferData!!, 0, vRem)
 
-        val yBytes = yBufferData!!
-        val uBytes = uBufferData!!
-        val vBytes = vBufferData!!
+            val yBytes = yBufferData!!
+            val uBytes = uBufferData!!
+            val vBytes = vBufferData!!
 
-        val yRowStride    = yPlane.rowStride
-        val uvRowStride   = uPlane.rowStride
-        val uvPixelStride = uPlane.pixelStride
-        val width  = image.width
-        val height = image.height
+            val yRowStride    = yPlane.rowStride
+            val uvRowStride   = uPlane.rowStride
+            val uvPixelStride = uPlane.pixelStride
+            val width  = image.width
+            val height = image.height
 
-        val totalSize = width * height * 3 / 2
-        if (nv21Buffer == null || nv21Buffer!!.size < totalSize) nv21Buffer = ByteArray(totalSize)
-        val nv21 = nv21Buffer!!
-        var pos = 0
+            val totalSize = width * height * 3 / 2
+            if (nv21Buffer == null || nv21Buffer!!.size < totalSize) nv21Buffer = ByteArray(totalSize)
+            val nv21 = nv21Buffer!!
+            var pos = 0
 
-        for (row in 0 until height) {
-            val yPos = row * yRowStride
-            val len = Math.min(width, Math.max(0, yBytes.size - yPos))
-            if (len > 0) {
-                System.arraycopy(yBytes, yPos, nv21, pos, len)
+            for (row in 0 until height) {
+                val yPos = row * yRowStride
+                val len = Math.min(width, Math.max(0, yBytes.size - yPos))
+                if (len > 0) {
+                    System.arraycopy(yBytes, yPos, nv21, pos, len)
+                }
+                pos += width
             }
-            pos += width
-        }
 
-        for (row in 0 until height / 2) {
-            val rowOffset = row * uvRowStride
-            for (col in 0 until width / 2) {
-                val p = rowOffset + col * uvPixelStride
-                nv21[pos++] = if (p < vBytes.size) vBytes[p] else 0
-                nv21[pos++] = if (p < uBytes.size) uBytes[p] else 0
+            for (row in 0 until height / 2) {
+                val rowOffset = row * uvRowStride
+                for (col in 0 until width / 2) {
+                    val p = rowOffset + col * uvPixelStride
+                    nv21[pos++] = if (p < vBytes.size) vBytes[p] else 0
+                    nv21[pos++] = if (p < uBytes.size) uBytes[p] else 0
+                }
             }
-        }
 
-        val yuv = Mat(height + height / 2, width, CvType.CV_8UC1)
-        yuv.put(0, 0, nv21)
-        val bgr = Mat()
-        Imgproc.cvtColor(yuv, bgr, Imgproc.COLOR_YUV2BGR_NV21)
-        yuv.release()
-        return bgr
+            val yuv = Mat(height + height / 2, width, CvType.CV_8UC1)
+            try {
+                yuv.put(0, 0, nv21)
+                val bgr = Mat()
+                Imgproc.cvtColor(yuv, bgr, Imgproc.COLOR_YUV2BGR_NV21)
+                return bgr
+            } finally {
+                yuv.release()
+            }
+        } catch (t: Throwable) {
+            android.util.Log.e("ImageProcessor", "yuvToMat fatal: ${t.message}")
+            return Mat()
+        }
     }
 
     // ─── Enhancement Pipeline ─────────────────────────────────────────────────
 
     fun enhance(src: Mat): Mat {
+        if (src.empty()) return Mat()
         val gray = Mat()
-        if (src.channels() == 3) Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY)
-        else src.copyTo(gray)
-
-        val clahe = Imgproc.createCLAHE(3.0, Size(8.0, 8.0))
         val claheOut = Mat()
-        clahe.apply(gray, claheOut)
-        gray.release()
-
         val blurred = Mat()
-        Imgproc.GaussianBlur(claheOut, blurred, Size(3.0, 3.0), 1.0)
-        claheOut.release()
+        
+        try {
+            if (src.channels() == 3) Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY)
+            else src.copyTo(gray)
 
-        val ridgeEnhanced = gaborBankEnhance(blurred)
-        blurred.release()
+            val clahe = Imgproc.createCLAHE(3.0, Size(8.0, 8.0))
+            clahe.apply(gray, claheOut)
+            
+            Imgproc.GaussianBlur(claheOut, blurred, Size(3.0, 3.0), 1.0)
 
-        val binary = Mat()
-        Imgproc.adaptiveThreshold(
-            ridgeEnhanced, binary, 255.0,
-            Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 11, 2.0
-        )
-        ridgeEnhanced.release()
+            val ridgeEnhanced = gaborBankEnhance(blurred)
+            if (ridgeEnhanced.empty()) return Mat()
 
-        val skeleton = skeletonize(binary)
-        binary.release()
-        return skeleton
+            val binary = Mat()
+            try {
+                Imgproc.adaptiveThreshold(
+                    ridgeEnhanced, binary, 255.0,
+                    Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 11, 2.0
+                )
+                return skeletonize(binary)
+            } finally {
+                ridgeEnhanced.release()
+                binary.release()
+            }
+        } catch (t: Throwable) {
+            android.util.Log.e("ImageProcessor", "enhance fatal: ${t.message}")
+            return Mat()
+        } finally {
+            gray.release(); claheOut.release(); blurred.release()
+        }
     }
 
     private fun gaborBankEnhance(gray: Mat): Mat {
+        if (gray.empty()) return Mat()
         val result = Mat.zeros(gray.size(), CvType.CV_32F)
         val temp32 = Mat()
-        gray.convertTo(temp32, CvType.CV_32F)
+        
+        try {
+            gray.convertTo(temp32, CvType.CV_32F)
 
-        for ((dx, dy) in listOf(Pair(1,0), Pair(1,1), Pair(0,1), Pair(-1,1))) {
-            val sx = Mat(); val sy = Mat(); val mag = Mat()
-            Imgproc.Sobel(temp32, sx, CvType.CV_32F, dx.coerceIn(0,1), 0, 3)
-            Imgproc.Sobel(temp32, sy, CvType.CV_32F, 0, dy.coerceIn(0,1), 3)
-            Core.magnitude(sx, sy, mag)
-            Core.max(result, mag, result)
-            sx.release(); sy.release(); mag.release()
+            for ((dx, dy) in listOf(Pair(1,0), Pair(1,1), Pair(0,1), Pair(-1,1))) {
+                val sx = Mat(); val sy = Mat(); val mag = Mat()
+                try {
+                    Imgproc.Sobel(temp32, sx, CvType.CV_32F, dx.coerceIn(0,1), 0, 3)
+                    Imgproc.Sobel(temp32, sy, CvType.CV_32F, 0, dy.coerceIn(0,1), 3)
+                    Core.magnitude(sx, sy, mag)
+                    Core.max(result, mag, result)
+                } finally {
+                    sx.release(); sy.release(); mag.release()
+                }
+            }
+
+            val out = Mat()
+            Core.normalize(result, out, 0.0, 255.0, Core.NORM_MINMAX, CvType.CV_8U)
+            return out
+        } finally {
+            temp32.release()
+            result.release()
         }
-        temp32.release()
-
-        val out = Mat()
-        Core.normalize(result, out, 0.0, 255.0, Core.NORM_MINMAX, CvType.CV_8U)
-        result.release()
-        return out
     }
 
     private fun skeletonize(binary: Mat): Mat {
+        if (binary.empty()) return Mat()
         val skeleton = Mat.zeros(binary.size(), CvType.CV_8U)
         val temp = Mat(); val eroded = Mat()
         val element = Imgproc.getStructuringElement(Imgproc.MORPH_CROSS, Size(3.0, 3.0))
-        var src = binary.clone()
-        while (true) {
-            Imgproc.erode(src, eroded, element)
-            Imgproc.dilate(eroded, temp, element)
-            Core.subtract(src, temp, temp)
-            Core.bitwise_or(skeleton, temp, skeleton)
-            eroded.copyTo(src)
-            if (Core.countNonZero(src) == 0) break
+        var curSrc = binary.clone()
+        var iters = 0
+        try {
+            while (iters < 100) { // HARD LIMIT to prevent infinite thinning loops
+                Imgproc.erode(curSrc, eroded, element)
+                Imgproc.dilate(eroded, temp, element)
+                Core.subtract(curSrc, temp, temp)
+                Core.bitwise_or(skeleton, temp, skeleton)
+                eroded.copyTo(curSrc)
+                if (Core.countNonZero(curSrc) == 0) break
+                iters++
+            }
+        } finally {
+            curSrc.release(); temp.release(); eroded.release(); element.release()
         }
-        src.release(); temp.release(); eroded.release(); element.release()
         return skeleton
     }
 
@@ -180,69 +212,58 @@ object ImageProcessor {
      *   5. Fallback to full-frame ROI if nothing detected
      */
     fun segmentFingers(src: Mat, maxFingers: Int = 4): List<FingerROI> {
+        if (src.empty()) return emptyList()
         val ycrcb = Mat()
-        Imgproc.cvtColor(src, ycrcb, Imgproc.COLOR_BGR2YCrCb)
         val skinMask = Mat()
-        Core.inRange(ycrcb, Scalar(0.0, 133.0, 77.0), Scalar(255.0, 173.0, 127.0), skinMask)
-        ycrcb.release()
-
-        val closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(7.0, 7.0))
-        val openKernel  = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(5.0, 5.0))
-        Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_CLOSE, closeKernel)
-        Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_OPEN,  openKernel)
-        closeKernel.release(); openKernel.release()
-
-        val contours  = mutableListOf<MatOfPoint>()
         val hierarchy = Mat()
-        Imgproc.findContours(skinMask, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
-        skinMask.release(); hierarchy.release()
+        val contours = mutableListOf<MatOfPoint>()
+        
+        try {
+            Imgproc.cvtColor(src, ycrcb, Imgproc.COLOR_BGR2YCrCb)
+            Core.inRange(ycrcb, Scalar(0.0, 133.0, 77.0), Scalar(255.0, 173.0, 127.0), skinMask)
+            
+            val closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(7.0, 7.0))
+            val openKernel  = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(5.0, 5.0))
+            Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_CLOSE, closeKernel)
+            Imgproc.morphologyEx(skinMask, skinMask, Imgproc.MORPH_OPEN,  openKernel)
+            closeKernel.release(); openKernel.release()
 
-        val imageArea = (src.rows() * src.cols()).toDouble()
-        val minArea   = imageArea * 0.005
-        val maxArea   = imageArea * 0.45
+            Imgproc.findContours(skinMask, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
-        // Primary filter: area + aspect ratio + portrait orientation
-        val validContours = contours.filter { c ->
-            val rect   = Imgproc.boundingRect(c)
-            val area   = Imgproc.contourArea(c)
-            val aspect = rect.width.toDouble() / rect.height.toDouble()
-            area in minArea..maxArea && aspect < 1.3 && rect.height >= rect.width
-        }
+            val imageArea = (src.rows() * src.cols()).toDouble()
+            val minArea   = imageArea * 0.005
+            val maxArea   = imageArea * 0.45
 
-        // Try to split merged fingers via convexity defects
-        val rects = mutableListOf<Pair<Rect, Double>>()
-        for (c in validContours) {
-            val rect = Imgproc.boundingRect(c)
-            val area = Imgproc.contourArea(c)
-            val splits = trySplitMergedFingers(c, rect, maxFingers)
-            if (splits.isNotEmpty()) {
-                rects.addAll(splits)
-            } else {
-                rects.add(Pair(rect, area))
+            val rects = mutableListOf<Pair<Rect, Double>>()
+            for (c in contours) {
+                val rect = Imgproc.boundingRect(c)
+                val area = Imgproc.contourArea(c)
+                val aspect = rect.width.toDouble() / rect.height.toDouble()
+                
+                if (area in minArea..maxArea && aspect < 1.3 && rect.height >= rect.width) {
+                    val splits = trySplitMergedFingers(c, rect, maxFingers)
+                    if (splits.isNotEmpty()) rects.addAll(splits) else rects.add(Pair(rect, area))
+                }
             }
-        }
 
-        // Sort left→right, take up to maxFingers
-        val sorted = rects
-            .filter { (r, a) ->
-                val aspect = r.width.toDouble() / r.height.toDouble()
-                a > imageArea * 0.003 && aspect < 1.4
+            val sorted = rects
+                .filter { (r, a) -> (r.width.toDouble() / r.height.toDouble()) < 1.4 && a > imageArea * 0.003 }
+                .sortedBy { it.first.x }
+                .take(maxFingers)
+
+            if (sorted.isEmpty()) {
+                val fallbackRect = Rect((src.cols() * 0.20).toInt(), (src.rows() * 0.10).toInt(), (src.cols() * 0.60).toInt(), (src.rows() * 0.80).toInt())
+                return listOf(FingerROI(0, fallbackRect, fallbackRect.area()))
             }
-            .sortedBy { (r, _) -> r.x }
-            .take(maxFingers)
 
-        // Fallback: if nothing detected, use centre 60% of frame as single ROI
-        if (sorted.isEmpty()) {
-            val fallbackRect = Rect(
-                (src.cols() * 0.20).toInt(), (src.rows() * 0.10).toInt(),
-                (src.cols() * 0.60).toInt(), (src.rows() * 0.80).toInt()
-            )
-            return listOf(FingerROI(0, fallbackRect, fallbackRect.area()))
+            return sorted.mapIndexed { idx, (rect, area) -> FingerROI(idx, rect, area) }
+        } catch (t: Throwable) {
+            android.util.Log.e("ImageProcessor", "segmentFingers fatal: ${t.message}")
+            return emptyList()
+        } finally {
+            ycrcb.release(); skinMask.release(); hierarchy.release()
+            contours.forEach { it.release() }
         }
-
-        val result = sorted.mapIndexed { idx, (rect, area) -> FingerROI(idx, rect, area) }
-        contours.forEach { it.release() }
-        return result
     }
 
     /**
@@ -257,57 +278,54 @@ object ImageProcessor {
         boundingRect: Rect,
         maxFingers: Int
     ): List<Pair<Rect, Double>> {
+        if (contour.empty()) return emptyList()
         val aspectRatio = boundingRect.width.toDouble() / boundingRect.height.toDouble()
-        // Only attempt split if contour is wider than tall (likely merged fingers)
         if (aspectRatio < 1.5) return emptyList()
 
         val hull = MatOfInt()
-        Imgproc.convexHull(contour, hull, false)
-
         val defects = MatOfInt4()
+        
         try {
+            Imgproc.convexHull(contour, hull, false)
+            if (hull.empty() || hull.rows() == 0) return emptyList()
+            
             Imgproc.convexityDefects(contour, hull, defects)
-        } catch (e: Exception) {
-            hull.release(); defects.release()
-            return emptyList()
-        }
+            if (defects.empty() || defects.rows() == 0) return emptyList()
 
-        if (defects.rows() == 0) {
-            hull.release(); defects.release()
-            return emptyList()
-        }
+            val points = contour.toArray()
+            val defectData = defects.toArray()
 
-        val points = contour.toArray()
-        val defectData = defects.toArray()
-
-        // Collect valley x-coordinates from significant defects
-        val valleyXs = mutableListOf<Int>()
-        for (i in defectData.indices step 4) {
-            val farIdx   = defectData[i + 2]
-            val depth    = defectData[i + 3] / 256.0  // depth in pixels
-            if (depth > boundingRect.height * 0.25 && farIdx < points.size) {
-                valleyXs.add(points[farIdx].x.toInt())
+            val valleyXs = mutableListOf<Int>()
+            for (i in defectData.indices step 4) {
+                val farIdx   = defectData[i + 2]
+                val depth    = defectData[i + 3] / 256.0
+                if (depth > boundingRect.height * 0.25 && farIdx < points.size) {
+                    valleyXs.add(points[farIdx].x.toInt())
+                }
             }
+
+            if (valleyXs.isEmpty()) return emptyList()
+
+            val splitXs = (listOf(boundingRect.x) + valleyXs.sorted() + listOf(boundingRect.x + boundingRect.width))
+                .distinct().sorted()
+
+            val splits = mutableListOf<Pair<Rect, Double>>()
+            for (i in 0 until splitXs.size - 1) {
+                val x0 = splitXs[i]
+                val x1 = splitXs[i + 1]
+                val w  = x1 - x0
+                if (w < 20) continue
+                val r = Rect(x0, boundingRect.y, w, boundingRect.height)
+                splits.add(Pair(r, r.area()))
+            }
+
+            return if (splits.size in 2..maxFingers) splits else emptyList()
+        } catch (t: Throwable) {
+            android.util.Log.e("ImageProcessor", "trySplitMergedFingers fatal: ${t.message}")
+            return emptyList()
+        } finally {
+            hull.release(); defects.release()
         }
-        hull.release(); defects.release()
-
-        if (valleyXs.isEmpty()) return emptyList()
-
-        // Build split rects between valleys
-        val splitXs = (listOf(boundingRect.x) + valleyXs.sorted() + listOf(boundingRect.x + boundingRect.width))
-            .distinct().sorted()
-
-        val splits = mutableListOf<Pair<Rect, Double>>()
-        for (i in 0 until splitXs.size - 1) {
-            val x0 = splitXs[i]
-            val x1 = splitXs[i + 1]
-            val w  = x1 - x0
-            if (w < 20) continue  // too narrow
-            val r = Rect(x0, boundingRect.y, w, boundingRect.height)
-            splits.add(Pair(r, r.area()))
-        }
-
-        return if (splits.size in 2..maxFingers) splits else emptyList()
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────

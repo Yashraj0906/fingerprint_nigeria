@@ -214,6 +214,13 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
     _start();
   }
 
+  @override
+  void dispose() {
+    _sdk.stopCapture();
+    _sdk.dispose();
+    super.dispose();
+  }
+
   Future<void> _start() async {
     try {
       // Get textureId from a fresh initialize (the SelectionScreen's instance

@@ -179,19 +179,21 @@ class CaptureEngine(
 
             withContext(Dispatchers.Main) { cameraManager.start(lifecycleOwner, surfaceProvider) }
             while (isCapturing) delay(50)
-            timeoutJob.cancel()
+            timeoutJob?.cancel()
         }
     }
 
     fun stop() {
+        android.util.Log.i(TAG, "Stopping capture session...")
         isCapturing = false
         captureJob?.cancel()
+        timeoutJob?.cancel()
         cameraManager.stop()
-        livenessDetector.reset()
+        releaseCandidates()
         FeedbackAnalyzer.reset()
         QualityAnalyzer.resetMotionBaseline()
-        releaseCandidates()
         validationManager.reset()
+        android.util.Log.i(TAG, "Capture session stopped and resources released.")
     }
 
     private suspend fun processFrame(frame: ImageProxy) {
@@ -207,6 +209,12 @@ class CaptureEngine(
         try {
             bgr  = ImageProcessor.yuvToMat(frame)
             frame.close()
+            
+            if (bgr.empty()) {
+                android.util.Log.w(TAG, "Empty frame from yuvToMat, skipping...")
+                return
+            }
+            
             gray = Mat()
             Imgproc.cvtColor(bgr, gray, Imgproc.COLOR_BGR2GRAY)
 
@@ -388,7 +396,8 @@ class CaptureEngine(
 
     private fun finaliseCapture(fingerId: String, best: FrameCandidate) {
         if (best.enhanced.empty()) {
-            best.ridges.release(); best.raw?.release()
+            android.util.Log.e(TAG, "Finalise failed: Enhanced mat is empty for $fingerId")
+            best.ridges.release(); best.raw?.release(); best.enhanced.release()
             return
         }
         val confidenceScore = best.confidenceScore.coerceIn(0.0, 100.0)
