@@ -34,6 +34,7 @@ jobs:
       - name: Generate example Android project
         working-directory: fingerprint-sdk/example
         run: |
+          flutter clean
           flutter pub get
           yes "" | flutter create --platforms android . || true
 
@@ -146,6 +147,9 @@ jobs:
       - name: Get dependencies
         working-directory: fingerprint-sdk/example
         run: |
+          rm -rf ios/Flutter/Generated.xcconfig
+          rm -rf ios/Flutter/flutter_export_environment.sh
+          flutter clean
           flutter pub get
           yes "" | flutter create --platforms ios . || true
 
