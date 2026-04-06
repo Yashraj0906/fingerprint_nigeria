@@ -34,6 +34,13 @@ object ImageProcessor {
         val uBuffer = uPlane.buffer
         val vBuffer = vPlane.buffer
 
+        val yBytes = ByteArray(yBuffer.remaining())
+        yBuffer.get(yBytes)
+        val uBytes = ByteArray(uBuffer.remaining())
+        uBuffer.get(uBytes)
+        val vBytes = ByteArray(vBuffer.remaining())
+        vBuffer.get(vBytes)
+
         val yRowStride    = yPlane.rowStride
         val uvRowStride   = uPlane.rowStride
         val uvPixelStride = uPlane.pixelStride
@@ -44,20 +51,20 @@ object ImageProcessor {
         var pos = 0
 
         for (row in 0 until height) {
-            yBuffer.position(row * yRowStride)
-            yBuffer.get(nv21, pos, width)
+            val yPos = row * yRowStride
+            val len = Math.min(width, Math.max(0, yBytes.size - yPos))
+            if (len > 0) {
+                System.arraycopy(yBytes, yPos, nv21, pos, len)
+            }
             pos += width
         }
+
         for (row in 0 until height / 2) {
-            vBuffer.position(row * uvRowStride)
-            uBuffer.position(row * uvRowStride)
+            val rowOffset = row * uvRowStride
             for (col in 0 until width / 2) {
-                nv21[pos++] = vBuffer.get()
-                nv21[pos++] = uBuffer.get()
-                if (uvPixelStride == 2) {
-                    vBuffer.position(vBuffer.position() + 1)
-                    uBuffer.position(uBuffer.position() + 1)
-                }
+                val p = rowOffset + col * uvPixelStride
+                nv21[pos++] = if (p < vBytes.size) vBytes[p] else 0
+                nv21[pos++] = if (p < uBytes.size) uBytes[p] else 0
             }
         }
 
