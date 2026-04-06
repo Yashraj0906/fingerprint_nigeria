@@ -215,13 +215,28 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
   }
 
   Future<void> _start() async {
-    final tid = await _sdk.initialize(debugMode: false);
-    _sdk.feedbackStream.listen((e) { 
-        if (mounted) setState(() { _feedback = e; }); 
-    });
-    setState(() { _textureId = tid; _initialized = true; });
-    
     try {
+      // Get textureId from a fresh initialize (the SelectionScreen's instance
+      // may have been disposed when we navigated away)
+      final tid = await _sdk.initialize(debugMode: false);
+      
+      if (!mounted) return;
+      
+      // Only use the texture if we got a valid ID
+      if (tid > 0) {
+        setState(() { _textureId = tid; _initialized = true; });
+      } else {
+        setState(() { _initialized = true; }); // proceed without preview
+      }
+
+      // Small delay to let camera actually start producing frames
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+
+      _sdk.feedbackStream.listen((e) { 
+          if (mounted) setState(() { _feedback = e; }); 
+      });
+
       final request = CaptureRequest(
         transactionId: widget.transactionId ?? 'TXN-${DateTime.now().millisecondsSinceEpoch}',
         captureMode: widget.mode,
@@ -240,7 +255,11 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
         );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Capture error: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
@@ -260,7 +279,7 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
         onDoubleTap: () => setState(() => _isDiagnosticMode = !_isDiagnosticMode),
         child: Stack(
           children: [
-            if (_textureId != null)
+            if (_textureId != null && _textureId! > 0)
                Positioned.fill(
                  child: Center(
                    child: AspectRatio(
