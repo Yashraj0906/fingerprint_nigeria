@@ -132,7 +132,7 @@ class CaptureEngine(
         }
     }
 
-    fun start(onComplete: (Map<String, Any>) -> Unit, onError: (String, String) -> Unit) {
+    fun start(surfaceProvider: android.androidx.camera.core.Preview.SurfaceProvider? = null, onComplete: (Map<String, Any>) -> Unit, onError: (String, String) -> Unit) {
         onSessionComplete = onComplete
         onSessionError = onError
         isCapturing = true
@@ -174,7 +174,7 @@ class CaptureEngine(
                 }
             }
 
-            withContext(Dispatchers.Main) { cameraManager.start(lifecycleOwner) }
+            withContext(Dispatchers.Main) { cameraManager.start(lifecycleOwner, surfaceProvider) }
             while (isCapturing) delay(50)
             timeoutJob.cancel()
         }

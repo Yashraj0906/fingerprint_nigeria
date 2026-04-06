@@ -4,6 +4,8 @@ class FingerResult {
   final String fingerId;
   final FingerStatus status;
   final double qualityScore;
+  final double sharpnessScore;
+  final double livenessConfidence;
   final bool livenessPassed;
   final String? template;       // base64 ISO template
   final String? rawImage;       // base64, only if returnRawImage=true
@@ -15,6 +17,8 @@ class FingerResult {
     required this.fingerId,
     required this.status,
     required this.qualityScore,
+    required this.sharpnessScore,
+    required this.livenessConfidence,
     required this.livenessPassed,
     this.template,
     this.rawImage,
@@ -27,6 +31,8 @@ class FingerResult {
         fingerId: m['fingerId'] as String,
         status: _parseStatus(m['status'] as String),
         qualityScore: (m['qualityScore'] as num).toDouble(),
+        sharpnessScore: (m['sharpnessScore'] as num? ?? 0.0).toDouble(),
+        livenessConfidence: (m['livenessConfidence'] as num? ?? 0.0).toDouble(),
         livenessPassed: m['livenessPassed'] as bool,
         template: m['template'] as String?,
         rawImage: m['rawImage'] as String?,

@@ -28,18 +28,20 @@ class CameraManager(private val context: Context) {
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var preview: Preview? = null
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
 
     /** Called on every new frame from the background executor thread. */
     var onFrame: ((ImageProxy) -> Unit)? = null
 
     @SuppressLint("UnsafeOptInUsageError")
-    fun start(lifecycleOwner: LifecycleOwner) {
+    fun start(lifecycleOwner: LifecycleOwner, surfaceProvider: SurfaceProvider? = null) {
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             try {
                 cameraProvider = future.get()
 
+                // 1. ANALYSIS (For Fingerprint Processing)
                 imageAnalysis = ImageAnalysis.Builder()
                     .setTargetResolution(android.util.Size(1280, 720))
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -48,15 +50,26 @@ class CameraManager(private val context: Context) {
                     .also { analysis ->
                         analysis.setAnalyzer(executor) { frame ->
                             onFrame?.invoke(frame)
-                            // Caller is responsible for frame.close()
                         }
                     }
+
+                // 2. PREVIEW (For Flutter UI)
+                preview = if (surfaceProvider != null) {
+                    Preview.Builder()
+                        .setTargetResolution(android.util.Size(1280, 720))
+                        .build()
+                        .also { it.setSurfaceProvider(surfaceProvider) }
+                } else null
 
                 val selector = CameraSelector.DEFAULT_BACK_CAMERA
 
                 cameraProvider?.unbindAll()
+                
+                val useCases = mutableListOf<UseCase>(imageAnalysis!!)
+                preview?.let { useCases.add(it) }
+
                 camera = cameraProvider?.bindToLifecycle(
-                    lifecycleOwner, selector, imageAnalysis
+                    lifecycleOwner, selector, *useCases.toTypedArray()
                 )
 
                 // Configure camera for macro/close-up fingerprint capture

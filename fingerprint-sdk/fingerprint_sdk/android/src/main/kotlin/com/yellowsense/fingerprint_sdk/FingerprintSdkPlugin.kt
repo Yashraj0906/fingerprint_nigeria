@@ -16,6 +16,9 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import org.opencv.android.OpenCVLoader
 
+import io.flutter.view.TextureRegistry
+import androidx.camera.core.Preview.SurfaceProvider
+
 class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     private lateinit var methodChannel: MethodChannel
@@ -28,6 +31,9 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private var captureEngine: CaptureEngine? = null
     private var debugMode = false
 
+    private var textureRegistry: TextureRegistry? = null
+    private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
+
     companion object {
         const val METHOD_CHANNEL = "com.yellowsense.fingerprint_sdk/method"
         const val EVENT_CHANNEL  = "com.yellowsense.fingerprint_sdk/feedback"
@@ -37,6 +43,7 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
+        textureRegistry = binding.textureRegistry
         methodChannel = MethodChannel(binding.binaryMessenger, METHOD_CHANNEL)
         methodChannel.setMethodCallHandler(this)
         eventChannel = EventChannel(binding.binaryMessenger, EVENT_CHANNEL)
@@ -52,6 +59,7 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         methodChannel.setMethodCallHandler(null)
         context = null
+        textureRegistry = null
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -85,28 +93,41 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             Log.e(TAG, "OpenCV init failed — ensure opencv-android-4.8.x.aar is in android/libs/")
             return result.error("DEVICE_UNSUPPORTED", "OpenCV init failed", null)
         }
-        if (debugMode) Log.d(TAG, "OpenCV loaded")
-
-        val profile = DeviceProfiler.profile(ctx)
-        if (debugMode) Log.d(TAG, "Device tier: ${profile.tier}")
-
+        
         cameraManager = CameraManager(ctx)
         captureEngine = CaptureEngine(
             cameraManager  = cameraManager!!,
             feedbackSink   = feedbackSink,
             lifecycleOwner = lo,
             debugMode      = debugMode,
-            deviceProfile  = profile
+            deviceProfile  = DeviceProfiler.profile(ctx)
         )
-        result.success(null)
+
+        // Create texture for preview
+        textureEntry = textureRegistry?.createSurfaceTexture()
+        val textureId = textureEntry?.id() ?: -1L
+        
+        result.success(textureId)
     }
 
     private fun handleStartCapture(call: MethodCall, result: Result) {
         val engine = captureEngine ?: return result.error("DEVICE_UNSUPPORTED", "SDK not initialised", null)
         val params = call.arguments as? Map<*, *> ?: return result.error("UNKNOWN", "Invalid arguments", null)
 
+        val surfaceProvider = textureEntry?.let { entry ->
+            SurfaceProvider { request ->
+                val surfaceTexture = entry.surfaceTexture()
+                surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+                val surface = android.view.Surface(surfaceTexture)
+                request.provideSurface(surface, io.flutter.util.ViewUtils.getDirectExecutor()) {
+                    surface.release()
+                }
+            }
+        }
+
         engine.configure(params)
         engine.start(
+            surfaceProvider = surfaceProvider,
             onComplete = { response -> result.success(response) },
             onError    = { code, msg ->
                 if (debugMode) Log.e(TAG, "Capture error [$code]: $msg")
@@ -123,6 +144,8 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private fun handleDispose(result: Result) {
         captureEngine?.stop()
         cameraManager?.stop()
+        textureEntry?.release()
+        textureEntry = null
         captureEngine = null
         cameraManager = null
         result.success(null)

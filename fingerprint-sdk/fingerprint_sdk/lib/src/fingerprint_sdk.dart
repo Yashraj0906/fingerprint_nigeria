@@ -24,11 +24,12 @@ class FingerprintSdk {
     return _feedbackStream!;
   }
 
-  /// Initialize camera and ML models.
+  /// Initialize camera and ML models. Returns textureId for preview.
   /// Pass [debugMode: true] to enable verbose native logging.
-  Future<void> initialize({bool debugMode = false}) async {
+  Future<int> initialize({bool debugMode = false}) async {
     try {
-      await _method.invokeMethod<void>('initialize', {'debugMode': debugMode});
+      final tid = await _method.invokeMethod<int>('initialize', {'debugMode': debugMode});
+      return tid ?? -1;
     } on PlatformException catch (e) {
       throw SdkException.fromMap({'errorCode': e.code, 'errorMessage': e.message});
     }
