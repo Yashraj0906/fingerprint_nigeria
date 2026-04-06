@@ -44,7 +44,8 @@ jobs:
 
       - name: Download OpenCV Android SDK, build AAR, and publish to Maven Local
         run: |
-          wget -q https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip
+          curl -L -o opencv-4.8.0-android-sdk.zip https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip
+          ls -lh opencv-4.8.0-android-sdk.zip
           unzip -q opencv-4.8.0-android-sdk.zip
           
           cd OpenCV-android-sdk

@@ -1,0 +1,29 @@
+# IDEs
+.idea/
+.vscode/
+
+# Build artifacts
+build/
+bin/
+obj/
+*.pyc
+*.pyo
+*.pyd
+
+# Local configuration
+local.properties
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Gradle
+.gradle/
+*.iml
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Backups
+temp_backup/
+*.bak
+*~

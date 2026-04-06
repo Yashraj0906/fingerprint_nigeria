@@ -1,0 +1,1 @@
+C:\Users\Yashraj Kumar\fingerprint_nigeria\fingerprint-sdk\example\build\app\intermediates\cxx\Debug\18558l32\obj\arm64-v8a

@@ -1,0 +1,2 @@
+C:/Users/Yashraj Kumar/fingerprint_nigeria/fingerprint-sdk/example/android/app/.cxx/Debug/1p6ap1y5/x86_64/CMakeFiles/edit_cache.dir
+C:/Users/Yashraj Kumar/fingerprint_nigeria/fingerprint-sdk/example/android/app/.cxx/Debug/1p6ap1y5/x86_64/CMakeFiles/rebuild_cache.dir
