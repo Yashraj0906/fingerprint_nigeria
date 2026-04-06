@@ -57,8 +57,7 @@ Java_com_yellowsense_fingerprint_1sdk_validation_LivenessDetector_nativeEvaluate
     std::string handModeStr(nativeHandMode);
     env->ReleaseStringUTFChars(handMode, nativeHandMode);
 
-    LivenessDetector detector;
-    LivenessResult res = detector.evaluate(*gray, *bgr, *fullBgr, handModeStr);
+    LivenessResult res = LivenessDetector::evaluate(*gray, *bgr, *fullBgr, handModeStr);
 
     jobject map = createJavaHashMap(env);
     putInMap(env, map, "passed", toJavaBool(env, res.passed));
@@ -80,8 +79,7 @@ Java_com_yellowsense_fingerprint_1sdk_processing_QualityAnalyzer_nativeAnalyze(
 
     cv::Mat* image = (cv::Mat*)imageAddr;
     
-    QualityAnalyzer analyzer;
-    QualityResult res = analyzer.analyze(*image);
+    QualityResult res = QualityAnalyzer::analyze(*image);
 
     jobject map = createJavaHashMap(env);
     putInMap(env, map, "blurScore", toJavaFloat(env, res.blurScore));
@@ -109,8 +107,7 @@ Java_com_yellowsense_fingerprint_1sdk_processing_TemplateEncoder_nativeEncode(
 
     cv::Mat* image = (cv::Mat*)imageAddr;
     
-    TemplateEncoder encoder;
-    TemplateResult res = encoder.extractTemplate(*image);
+    TemplateResult res = TemplateEncoder::extractTemplate(*image);
 
     if (!res.success) return nullptr;
 

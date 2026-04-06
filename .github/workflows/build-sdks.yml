@@ -114,7 +114,7 @@ jobs:
         working-directory: fingerprint-sdk/example/android
         run: |
           chmod +x gradlew
-          ./gradlew :fingerprint_sdk:assembleRelease --no-daemon -x lintVitalRelease
+          ./gradlew :fingerprint_sdk:assembleRelease -POpenCV_DIR="${{ env.OpenCV_DIR }}" --no-daemon -x lintVitalRelease
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4

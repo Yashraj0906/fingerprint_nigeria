@@ -78,7 +78,7 @@ float QualityAnalyzer::computeCoverageScore(const cv::Mat& gray) {
     // Ideal 30-80 %; penalise outside that band
     if (coverage >= 0.30 && coverage <= 0.80) {
         float centreDist = (float)std::abs(coverage - 0.55);
-        return std::clamp(100.0f - centreDist * 200.0f, 0.0f, 100.0f);
+        return std::max(0.0f, std::min(100.0f - centreDist * 200.0f, 100.0f));
     }
     float dist = (float)std::min(std::abs(coverage - 0.30), std::abs(coverage - 0.80));
     float score = 100.0f - dist * 500.0f;
