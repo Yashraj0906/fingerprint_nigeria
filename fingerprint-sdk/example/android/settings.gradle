@@ -26,7 +26,6 @@ pluginManagement {
 
 plugins {
     id "dev.flutter.flutter-gradle-plugin" apply false
-    id "dev.flutter.flutter-plugin" apply false
     id "com.android.application" version "8.7.2" apply false
     id "org.jetbrains.kotlin.android" version "2.1.0" apply false
 }
