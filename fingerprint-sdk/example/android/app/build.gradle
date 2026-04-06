@@ -32,6 +32,12 @@ android {
             signingConfig signingConfigs.debug
         }
     }
+
+    packagingOptions {
+        pickFirst 'lib/*/libc++_shared.so'
+        pickFirst 'lib/*/libopencv_java4.so'
+        pickFirst 'lib/*/libfingerprint_core.so'
+    }
 }
 
 dependencies {
