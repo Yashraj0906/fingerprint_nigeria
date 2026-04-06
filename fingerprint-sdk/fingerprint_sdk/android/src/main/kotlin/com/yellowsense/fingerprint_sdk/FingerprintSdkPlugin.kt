@@ -120,7 +120,7 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 val surfaceTexture = entry.surfaceTexture()
                 surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
                 val surface = android.view.Surface(surfaceTexture)
-                request.provideSurface(surface, ContextCompat.getMainExecutor(ctx)) {
+                request.provideSurface(surface, ContextCompat.getMainExecutor(context!!)) {
                     surface.release()
                 }
             }
