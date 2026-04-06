@@ -35,6 +35,30 @@ android {
 }
 
 dependencies {
+    // Explicitly add flutter embedding to prevent Kotlin compilation errors
+    def flutterRoot = System.getenv("FLUTTER_ROOT")
+    if (flutterRoot == null) {
+        def properties = new Properties()
+        def propertiesFile = project.rootProject.file('local.properties')
+        if (propertiesFile.exists()) {
+            propertiesFile.withInputStream { properties.load(it) }
+            flutterRoot = properties.getProperty('flutter.sdk')
+        }
+    }
+    def engineVersion = "unknown"
+    if (flutterRoot != null) {
+        def engineVersionFile = new File(flutterRoot, "bin/internal/engine.version")
+        if (engineVersionFile.exists()) {
+            engineVersion = engineVersionFile.text.trim()
+        }
+    }
+    implementation "io.flutter:flutter_embedding_release:1.0.0-${engineVersion}"
+}
+
+repositories {
+    maven { url "https://storage.googleapis.com/download.flutter.io" }
+    google()
+    mavenCentral()
 }
 
 flutter {
