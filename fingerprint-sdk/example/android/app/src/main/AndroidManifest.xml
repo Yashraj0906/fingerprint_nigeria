@@ -5,9 +5,10 @@
     <uses-feature android:name="android.hardware.camera" android:required="true" />
 
     <application
-        android:label="Fingerprint Demo"
+        android:label="Fingerprint Example"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@drawable/ic_launcher"
+        android:theme="@style/LaunchTheme">
         <activity
             android:name=".MainActivity"
             android:exported="true"
