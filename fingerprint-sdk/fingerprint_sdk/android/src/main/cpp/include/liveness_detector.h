@@ -23,6 +23,10 @@ public:
                                    const std::string& hand_mode);
 
 private:
+    static LivenessResult evaluateInternal(const cv::Mat& gray_sm, 
+                                           const cv::Mat& bgr_sm, 
+                                           const cv::Mat& full_bgr, 
+                                           const std::string& hand_mode);
     static bool detectPhoneBezel(const cv::Mat& bgr_full);
     static bool detectScreenReplay(const cv::Mat& gray, const cv::Mat& bgr, std::string& reason);
     static bool detectSpectralDecayAnomaly(const cv::Mat& gray);
