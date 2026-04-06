@@ -37,10 +37,10 @@ jobs:
           flutter clean
           flutter pub get
 
-      - name: Setup Gradle 8.4 (used for OpenCV standalone build)
+      - name: Setup Gradle 8.10 (used for OpenCV standalone build)
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.4'
+          gradle-version: '8.10'
 
       - name: Download OpenCV Android SDK, build AAR, and publish to Maven Local
         run: |
