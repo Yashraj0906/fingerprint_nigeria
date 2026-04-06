@@ -5,6 +5,8 @@ class FingerResult {
   final FingerStatus status;
   final double qualityScore;
   final double sharpnessScore;
+  final double brightnessScore;
+  final double centeringScore;
   final double livenessConfidence;
   final bool livenessPassed;
   final String? template;       // base64 ISO template
@@ -18,6 +20,8 @@ class FingerResult {
     required this.status,
     required this.qualityScore,
     required this.sharpnessScore,
+    required this.brightnessScore,
+    required this.centeringScore,
     required this.livenessConfidence,
     required this.livenessPassed,
     this.template,
@@ -32,6 +36,8 @@ class FingerResult {
         status: _parseStatus(m['status'] as String),
         qualityScore: (m['qualityScore'] as num).toDouble(),
         sharpnessScore: (m['sharpnessScore'] as num? ?? 0.0).toDouble(),
+        brightnessScore: (m['brightnessScore'] as num? ?? 0.0).toDouble(),
+        centeringScore: (m['centeringScore'] as num? ?? 0.0).toDouble(),
         livenessConfidence: (m['livenessConfidence'] as num? ?? 0.0).toDouble(),
         livenessPassed: m['livenessPassed'] as bool,
         template: m['template'] as String?,

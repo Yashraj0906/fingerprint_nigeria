@@ -96,9 +96,13 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 return result.error("DEVICE_UNSUPPORTED", "OpenCV init failed", null)
             }
             
-            cameraManager = CameraManager(ctx)
+            // CRITICAL: Cleanup any existing session before starting a new one
+            cleanup()
+            
+            val camera = CameraManager(ctx)
+            cameraManager = camera
             captureEngine = CaptureEngine(
-                cameraManager  = cameraManager!!,
+                cameraManager  = camera,
                 feedbackSink   = feedbackSink,
                 lifecycleOwner = lo,
                 debugMode      = debugMode,
@@ -106,8 +110,9 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             )
 
             // Create texture for preview
-            textureEntry = textureRegistry?.createSurfaceTexture()
-            val textureId = textureEntry?.id() ?: -1L
+            val entry = textureRegistry?.createSurfaceTexture()
+            textureEntry = entry
+            val textureId = entry?.id() ?: -1L
             
             result.success(textureId)
         } catch (e: Throwable) {
@@ -148,13 +153,22 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun handleDispose(result: Result) {
-        captureEngine?.stop()
-        cameraManager?.stop()
-        textureEntry?.release()
-        textureEntry = null
-        captureEngine = null
-        cameraManager = null
+        cleanup()
         result.success(null)
+    }
+
+    private fun cleanup() {
+        try {
+            captureEngine?.destroy()
+            cameraManager?.destroy()
+            textureEntry?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error during cleanup: ${e.message}")
+        } finally {
+            captureEngine = null
+            cameraManager = null
+            textureEntry = null
+        }
     }
 
     private fun handleGetMetrics(result: Result) {

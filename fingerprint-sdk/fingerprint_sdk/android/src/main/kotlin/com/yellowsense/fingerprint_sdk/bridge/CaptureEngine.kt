@@ -33,6 +33,8 @@ data class FingerCapture(
     var errorMessage: String?   = null,
     var failureReason: String?  = null,
     var sharpnessScore: Double  = 0.0,
+    var brightnessScore: Double = 0.0,
+    var centeringScore: Double  = 0.0,
     var livenessConfidence: Double = 0.0
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
@@ -48,6 +50,8 @@ data class FingerCapture(
         "errorMessage" to errorMessage,
         "failureReason" to failureReason,
         "sharpnessScore" to sharpnessScore,
+        "brightnessScore" to brightnessScore,
+        "centeringScore" to centeringScore,
         "livenessConfidence" to livenessConfidence
     )
 }
@@ -99,7 +103,9 @@ class CaptureEngine(
         val ridges: Mat,
         val raw: Mat?,
         val livenessPassed: Boolean,
-        val sharpnessScore: Double
+        val sharpnessScore: Double,
+        val brightnessScore: Double,
+        val centeringScore: Double
     ) {
         val confidenceScore: Double get() =
             qualityScore * 0.50 + livenessConfidence * 100 * 0.30 + segmentationConfidence * 100 * 0.20
@@ -195,6 +201,12 @@ class CaptureEngine(
         QualityAnalyzer.resetMotionBaseline()
         validationManager.reset()
         android.util.Log.i(TAG, "Capture session stopped and resources released.")
+    }
+
+    fun destroy() {
+        stop()
+        scope.cancel()
+        android.util.Log.i(TAG, "CaptureEngine scope cancelled and destroyed.")
     }
 
     private suspend fun processFrame(frame: ImageProxy) {
@@ -308,6 +320,14 @@ class CaptureEngine(
                     val quality = if (performQuality) QualityAnalyzer.analyze(enhanced, gray) else null
                     if (quality != null) validationManager.recordQualityScore(quality.score)
 
+                    val centering = if (gray.empty()) 100.0 else {
+                        val fx = gray.cols() / 2.0; val fy = gray.rows() / 2.0
+                        val rx = roi.rect.x + roi.rect.width / 2.0; val ry = roi.rect.y + roi.rect.height / 2.0
+                        val dist = Math.sqrt(Math.pow(rx - fx, 2.0) + Math.pow(ry - fy, 2.0))
+                        val maxD = Math.sqrt(Math.pow(gray.cols().toDouble(), 2.0) + Math.pow(gray.rows().toDouble(), 2.0)) / 2.0
+                        ((1.0 - (dist / maxD)) * 100).coerceIn(0.0, 100.0)
+                    }
+
                     val adaptiveReject = if (quality == null) false
                     else if (elapsed > 500) quality.verdict == QualityAnalyzer.Verdict.REJECT
                     else quality.verdict == QualityAnalyzer.Verdict.REJECT || quality.verdict == QualityAnalyzer.Verdict.RETRY
@@ -343,7 +363,9 @@ class CaptureEngine(
                             ridges = ridges.also { ridges = null },
                             raw = rawMat.also { rawMat = null },
                             livenessPassed = liveness?.passed ?: true,
-                            sharpnessScore = quality?.blurScore ?: 0.0
+                            sharpnessScore = quality?.sharpnessScore ?: 0.0,
+                            brightnessScore = quality?.brightnessScore ?: 0.0,
+                            centeringScore = centering
                         )
                     )
 
@@ -416,7 +438,8 @@ class CaptureEngine(
             confidenceScore = confidenceScore, template = template, status = "success",
             processedImage = if (returnProcessed && best.raw != null) ImageProcessor.matToBase64(best.raw) else null,
             rawImage = if (returnRaw && best.raw != null) ImageProcessor.matToBase64(best.raw) else null,
-            sharpnessScore = best.sharpnessScore, livenessConfidence = best.livenessConfidence
+            sharpnessScore = best.sharpnessScore, brightnessScore = best.brightnessScore,
+            centeringScore = best.centeringScore, livenessConfidence = best.livenessConfidence
         )
         best.enhanced.release(); best.ridges.release(); best.raw?.release()
     }

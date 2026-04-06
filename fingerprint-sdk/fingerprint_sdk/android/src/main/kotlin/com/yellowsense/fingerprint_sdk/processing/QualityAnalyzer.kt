@@ -19,6 +19,9 @@ object QualityAnalyzer {
         val ridgeScore: Double,
         val coverageScore: Double,
         val motionScore: Double,
+        val sharpnessScore: Double,
+        val brightnessScore: Double,
+        val centeringScore: Double,
         val verdict: Verdict
     ) {
         val passed: Boolean get() = verdict == Verdict.ACCEPT
@@ -56,6 +59,9 @@ object QualityAnalyzer {
                     ridgeScore = (res["ridgeClarityScore"] as? Number)?.toDouble() ?: 0.0,
                     coverageScore = (res["coverageScore"] as? Number)?.toDouble() ?: 0.0,
                     motionScore = (res["orientationScore"] as? Number)?.toDouble() ?: 0.0,
+                    sharpnessScore = (res["blurScore"] as? Number)?.toDouble() ?: 0.0,
+                    brightnessScore = (res["contrastScore"] as? Number)?.toDouble() ?: 0.0,
+                    centeringScore = 100.0, // Placeholder, calculated in CaptureEngine
                     verdict = when (res["decision"] as? String) {
                         "ACCEPT" -> Verdict.ACCEPT
                         "RETRY"  -> Verdict.RETRY
@@ -106,10 +112,10 @@ object QualityAnalyzer {
                 composite > 40 -> Verdict.RETRY
                 else -> Verdict.REJECT
             }
-            return QualityResult(composite, blurScore, contrastScore, 60.0, 60.0, 60.0, verdict)
+            return QualityResult(composite, blurScore, contrastScore, 60.0, 60.0, 60.0, blurScore, contrastScore, 100.0, verdict)
         } catch (e: Throwable) {
             Log.e(TAG, "Kotlin fallback also failed: ${e.message}")
-            return QualityResult(60.0, 60.0, 60.0, 60.0, 60.0, 60.0, Verdict.ACCEPT)
+            return QualityResult(60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 100.0, Verdict.ACCEPT)
         }
     }
 

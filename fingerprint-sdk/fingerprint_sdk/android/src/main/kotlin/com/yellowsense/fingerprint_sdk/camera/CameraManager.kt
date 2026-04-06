@@ -94,12 +94,16 @@ class CameraManager(private val context: Context) {
         try {
             cameraProvider?.unbindAll()
             camera = null
-            if (executor != null && !executor.isShutdown) {
-                executor.shutdown()
-            }
             Log.d(TAG, "Camera stopped safely")
         } catch (e: Exception) {
             Log.w(TAG, "Error during camera shutdown: ${e.message}")
+        }
+    }
+
+    fun destroy() {
+        stop()
+        if (!executor.isShutdown) {
+            executor.shutdownNow()
         }
     }
 }

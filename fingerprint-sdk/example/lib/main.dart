@@ -206,7 +206,6 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
   int? _textureId;
   FeedbackEvent? _feedback;
   bool _initialized = false;
-  bool _isDiagnosticMode = false;
   
   @override
   void initState() {
@@ -223,20 +222,14 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
 
   Future<void> _start() async {
     try {
-      // Get textureId from a fresh initialize (the SelectionScreen's instance
-      // may have been disposed when we navigated away)
       final tid = await _sdk.initialize(debugMode: false);
-      
       if (!mounted) return;
-      
-      // Only use the texture if we got a valid ID
       if (tid > 0) {
         setState(() { _textureId = tid; _initialized = true; });
       } else {
-        setState(() { _initialized = true; }); // proceed without preview
+        setState(() { _initialized = true; });
       }
 
-      // Small delay to let camera actually start producing frames
       await Future.delayed(const Duration(milliseconds: 500));
       if (!mounted) return;
 
@@ -258,7 +251,7 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
       final response = await _sdk.startCapture(request);
       if (mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => ResultSummaryScreen(response: response)),
+          MaterialPageRoute(builder: (_) => ResultSummaryScreen(response: response, mode: widget.mode)),
         );
       }
     } catch (e) {
@@ -280,196 +273,254 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final expectedCount = _getFingersForMode(widget.mode).length;
+    
     return Scaffold(
       backgroundColor: Colors.black,
-      body: GestureDetector(
-        onDoubleTap: () => setState(() => _isDiagnosticMode = !_isDiagnosticMode),
-        child: Stack(
-          children: [
-            if (_textureId != null && _textureId! > 0)
-               Positioned.fill(
-                 child: Center(
-                   child: AspectRatio(
-                     aspectRatio: 9 / 16,
-                     child: Texture(textureId: _textureId!),
-                   ),
+      body: Stack(
+        children: [
+          // 1. Camera Preview
+          if (_textureId != null && _textureId! > 0)
+             Positioned.fill(
+               child: Center(
+                 child: AspectRatio(
+                   aspectRatio: 9 / 16,
+                   child: Texture(textureId: _textureId!),
                  ),
-                ),
-            
-            // Header
-            Positioned(
-              top: 50, left: 0, right: 0,
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                        decoration: BoxDecoration(color: const Color(0xFFFFC107), borderRadius: BorderRadius.circular(20)),
-                        child: Text(widget.mode.name.toUpperCase().replaceAll('_', ' '),
-                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+               ),
+              ),
+          
+          // 2. Header & Badges
+          Positioned(
+            top: 50, left: 16, right: 16,
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    InkWell(
+                      onTap: () => Navigator.pop(context),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: const Color(0xFFFFC107), borderRadius: BorderRadius.circular(12)),
+                        child: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
                       ),
-                      const SizedBox(width: 48),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  if (_feedback != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(20)),
-                      child: Text('Quality: ${(_feedback!.confidence * 100).toStringAsFixed(0)}%',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ),
+                    Text(widget.mode.name.toUpperCase().replaceAll('_', ' '),
+                        style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 40),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _Badge(
+                      label: 'Quality: ${(_feedback?.confidence ?? 0 * 100).toStringAsFixed(0)}%',
+                      color: Colors.orange,
+                    ),
+                    _Badge(
+                      label: '$expectedCount Fingers',
+                      color: const Color(0xFFFFC107),
+                      icon: Icons.check_circle,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // 3. Scanner ROI Box Overlay
+          Positioned.fill(
+            child: CustomPaint(
+              painter: ScannerOverlayPainter(mode: widget.mode),
+            ),
+          ),
+          
+          // 4. Instruction Bar
+          Positioned(
+            bottom: 30, left: 24, right: 24,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFC107),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 24),
+                  const SizedBox(width: 12),
+                  Text(_feedback?.message ?? "Place your hand inside the box",
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 ],
               ),
             ),
-
-            // Scanner ROI Box Overlay
-            Positioned.fill(
-              child: CustomPaint(
-                painter: ScannerOverlayPainter(mode: widget.mode),
-              ),
-            ),
-            
-            // Bottom Instruction Bar
-            Positioned(
-              bottom: 0, left: 0, right: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 18),
-                decoration: const BoxDecoration(color: Color(0xFFFFC107)),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.white, size: 20),
-                    SizedBox(width: 10),
-                    Text("Place your finger in front of camera",
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _DiagRow extends StatelessWidget {
+class _Badge extends StatelessWidget {
   final String label;
-  final String value;
-  const _DiagRow({required this.label, required this.value});
+  final Color color;
+  final IconData? icon;
+  const _Badge({required this.label, required this.color, this.icon});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Text('$label: $value', style: const TextStyle(color: Colors.white, fontSize: 11, fontFamily: 'monospace')),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[Icon(icon, size: 14, color: Colors.white), const SizedBox(width: 6)],
+          Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+        ],
+      ),
     );
   }
 }
 
 // ─── 3. RESULT SUMMARY SCREEN ─────────────────────────────────────────────────
 
-class ResultSummaryScreen extends StatefulWidget {
+class ResultSummaryScreen extends StatelessWidget {
   final CaptureResponse response;
-  const ResultSummaryScreen({super.key, required this.response});
-
-  @override
-  State<ResultSummaryScreen> createState() => _ResultSummaryScreenState();
-}
-
-class _ResultSummaryScreenState extends State<ResultSummaryScreen> {
-  int _selectedIndex = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedIndex = widget.response.results.indexWhere((r) => r.status == FingerStatus.success);
-    if (_selectedIndex < 0) _selectedIndex = 0;
-  }
+  final CaptureMode mode;
+  const ResultSummaryScreen({super.key, required this.response, required this.mode});
 
   @override
   Widget build(BuildContext context) {
+    final successFingers = response.results.where((r) => r.status == FingerStatus.success).toList();
+    final avgQuality = successFingers.isEmpty ? 0.0 : successFingers.fold(0.0, (sum, e) => sum + e.qualityScore) / successFingers.length;
+    final livenessPassed = response.results.every((r) => r.livenessPassed);
+
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Capture Result'),
-        backgroundColor: Colors.black,
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst)),
+        title: const Text('Capture Result', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        backgroundColor: const Color(0xFFFFC107),
+        centerTitle: true,
+        elevation: 0,
+        automaticallyImplyLeading: false,
       ),
-      backgroundColor: Colors.black,
       body: SingleChildScrollView(
         child: Column(
           children: [
-            if (widget.response.results.isNotEmpty && _selectedIndex < widget.response.results.length)
-              Container(
-                height: 280, width: double.infinity,
-                color: Colors.black,
-                child: widget.response.results[_selectedIndex].processedImage != null
-                    ? Image.memory(
-                        base64Decode(widget.response.results[_selectedIndex].processedImage!),
-                        fit: BoxFit.cover,
-                      )
-                    : const Center(child: Icon(Icons.fingerprint, color: Colors.white24, size: 80)),
+            const SizedBox(height: 24),
+            // Success Icon
+            Container(
+              width: 100, height: 100,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.green, width: 3),
               ),
-              
+              child: const Icon(Icons.check, color: Colors.green, size: 64),
+            ),
+            const SizedBox(height: 16),
+            const Text('Capture Successful!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFFFFC107))),
+            Text(mode.name.toUpperCase().replaceAll('_', ' '), style: TextStyle(fontSize: 14, color: Colors.grey.shade600, letterSpacing: 1.2)),
+            
+            const SizedBox(height: 24),
+            // Captured Image
+            if (successFingers.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 24),
+                height: 240,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  image: DecorationImage(
+                    image: MemoryImage(base64Decode(successFingers.first.processedImage ?? '')),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            
             Padding(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _MetricCard(
-                    label: 'Overall Quality Score', 
-                    value: widget.response.results.isEmpty ? 0 : widget.response.results.fold(0.0, (sum, e) => sum + e.qualityScore) / (widget.response.results.length * 100),
-                    results: widget.response.results,
-                  ),
+                  // Quality Score Bar
+                  const Text('Quality Score', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   const SizedBox(height: 12),
-                  _ResultBadge(passed: widget.response.results.every((r) => r.livenessPassed)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: LinearProgressIndicator(
+                          value: avgQuality / 100,
+                          minHeight: 12,
+                          backgroundColor: Colors.grey.shade200,
+                          color: const Color(0xFFFFC107),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text('${avgQuality.toInt()}%', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFFFC107), fontSize: 18)),
+                    ],
+                  ),
+
+                  const SizedBox(height: 32),
+                  // Quality Details Section
+                  const Text('Quality Details', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   const SizedBox(height: 16),
+                  _MetricDetail(label: 'Sharpness (Blur)', value: successFingers.isEmpty ? 0 : successFingers.map((e) => e.sharpnessScore).reduce((a, b) => a + b) / successFingers.length, icon: Icons.grid_on),
+                  _MetricDetail(label: 'Brightness', value: successFingers.isEmpty ? 0 : successFingers.map((e) => e.brightnessScore).reduce((a, b) => a + b) / successFingers.length, icon: Icons.light_mode),
+                  _MetricDetail(label: 'Centering', value: successFingers.isEmpty ? 0 : successFingers.map((e) => e.centeringScore).reduce((a, b) => a + b) / successFingers.length, icon: Icons.center_focus_strong),
                   
-                  ...List.generate(widget.response.results.length, (index) {
-                    final finger = widget.response.results[index];
-                    return GestureDetector(
-                       onTap: () => setState(() => _selectedIndex = index),
-                       child: Container(
-                         margin: const EdgeInsets.only(bottom: 8),
-                         decoration: BoxDecoration(
-                           border: Border.all(color: _selectedIndex == index ? const Color(0xFFFFC107) : Colors.transparent, width: 2),
-                           borderRadius: BorderRadius.circular(14),
-                         ),
-                         child: _FingerDetailItem(finger: finger),
-                       ),
-                    );
-                  }),
-                  
-                  const SizedBox(height: 16),
-                  _TransactionTable(response: widget.response),
+                  const SizedBox(height: 24),
+                  const Divider(),
                   const SizedBox(height: 24),
                   
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFFC107),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
-                    icon: const Icon(Icons.home),
-                    label: const Text('Done', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  // Transaction Info
+                  _InfoRow(label: 'Transaction ID', value: response.transactionId.substring(0, 12) + '...'),
+                  _InfoRow(label: 'Fingers Captured', value: successFingers.length.toString()),
+                  _InfoRow(
+                    label: 'Liveness Check', 
+                    value: livenessPassed ? 'Passed ✓' : 'Failed ❌',
+                    valueColor: livenessPassed ? Colors.green : Colors.red,
                   ),
+                  
+                  const SizedBox(height: 32),
+                  // Finger Details List
+                  const Text('Finger Details', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFFFC107),
-                      side: const BorderSide(color: Color(0xFFFFC107)),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Capture Again'),
+                  ...response.results.map((r) => _FingerScoreItem(finger: r)),
+                  
+                  const SizedBox(height: 40),
+                  // Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFFFFC107)),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Capture Again', style: TextStyle(color: Color(0xFFFFC107), fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFFC107),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+                          child: const Text('Done', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -481,208 +532,82 @@ class _ResultSummaryScreenState extends State<ResultSummaryScreen> {
   }
 }
 
-class _FingerDetailItem extends StatelessWidget {
-  final FingerResult finger;
-  const _FingerDetailItem({required this.finger});
-
-  @override
-  Widget build(BuildContext context) {
-    var name = finger.fingerId.toUpperCase().replaceAll('_', ' ');
-    if (name == 'RIGHT INDEX' && finger.fingerId == 'RIGHT_INDEX') {
-        name = 'FINGER SCANNED'; 
-    }
-    return Card(
-      elevation: 0, color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade200)),
-      child: ExpansionTile(
-        leading: Icon(
-          finger.status == FingerStatus.success ? Icons.check_circle : Icons.error_outline,
-          color: finger.status == FingerStatus.success ? Colors.green : Colors.red,
-        ),
-        title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-        trailing: Text('Q: ${finger.qualityScore.toInt()}', style: const TextStyle(color: Color(0xFFFFC107), fontWeight: FontWeight.bold)),
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: _DetailedQualityCard(finger: finger),
-          )
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailedQualityCard extends StatelessWidget {
-  final FingerResult finger;
-  const _DetailedQualityCard({super.key, required this.finger});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-          const Text('Quality Details', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-          const SizedBox(height: 16),
-          _DetailRow(icon: Icons.grid_on, label: 'Sharpness Score', value: finger.sharpnessScore),
-          _DetailRow(icon: Icons.flare, label: 'Texture Score (Liveness)', value: finger.livenessConfidence * 100),
-          _DetailRow(icon: Icons.shield, label: 'Liveness Verdict', value: finger.livenessPassed ? 100 : 0, isVerdict: true),
-      ],
-    );
-  }
-}
-
-class _ResultBadge extends StatelessWidget {
-  final bool passed;
-  const _ResultBadge({required this.passed});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
-      decoration: BoxDecoration(
-        color: passed ? Colors.green.shade600 : Colors.red.shade600,
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-            BoxShadow(color: (passed ? Colors.green : Colors.red).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(passed ? Icons.verified_user : Icons.gpp_bad, color: Colors.white, size: 24),
-          const SizedBox(width: 12),
-          Text(
-            passed ? "AUTHENTIC BIOMETRIC VERIFIED" : "SECURITY ALERT: SPOOF DETECTED",
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MetricCard extends StatefulWidget {
+class _MetricDetail extends StatelessWidget {
   final String label;
   final double value;
-  final List<FingerResult> results;
-  const _MetricCard({required this.label, required this.value, required this.results});
-
-  @override
-  State<_MetricCard> createState() => _MetricCardState();
-}
-
-class _MetricCardState extends State<_MetricCard> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final totalSharpness = widget.results.fold(0.0, (sum, e) => sum + e.sharpnessScore);
-    final totalLiveness  = widget.results.fold(0.0, (sum, e) => sum + e.livenessConfidence);
-    final avgSharpness   = widget.results.isEmpty ? 0.0 : totalSharpness / widget.results.length;
-    final avgLiveness    = widget.results.isEmpty ? 0.0 : totalLiveness / widget.results.length;
-
-    return InkWell(
-      onTap: () => setState(() => _expanded = !_expanded),
-      child: Card(
-        elevation: 0, color: Colors.grey.shade50,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade200)),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(widget.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                Icon(_expanded ? Icons.expand_less : Icons.expand_more, size: 16, color: Colors.grey),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: LinearProgressIndicator(value: widget.value, color: const Color(0xFFFFC107), backgroundColor: Colors.grey.shade200, minHeight: 8)),
-              const SizedBox(width: 12),
-              Text('${(widget.value * 100).toStringAsFixed(0)}%', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFFFC107))),
-            ]),
-            if (_expanded) ...[
-              const SizedBox(height: 20),
-              const Divider(height: 1),
-              const SizedBox(height: 16),
-              _DetailRow(icon: Icons.grid_on, label: 'Average Sharpness', value: avgSharpness),
-              _DetailRow(icon: Icons.flare, label: 'Average Liveness (Texture)', value: avgLiveness * 100),
-            ]
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
   final IconData icon;
-  final String label;
-  final double value;
-  final bool isVerdict;
-  const _DetailRow({required this.icon, required this.label, required this.value, this.isVerdict = false});
+  const _MetricDetail({required this.label, required this.value, required this.icon});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(children: [
-        Icon(icon, size: 14, color: Colors.grey),
-        const SizedBox(width: 8),
-        Expanded(child: Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey))),
-        if (isVerdict)
-          Text(value > 50 ? 'REAL' : 'FAKE', style: TextStyle(color: value > 50 ? Colors.green : Colors.red, fontSize: 11, fontWeight: FontWeight.bold))
-        else
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey),
+          const SizedBox(width: 12),
+          Expanded(child: Text(label, style: const TextStyle(color: Colors.grey, fontSize: 14))),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(color: const Color(0xFFFFF8E1), borderRadius: BorderRadius.circular(20)),
-            child: Text('${value.toStringAsFixed(0)}%', style: const TextStyle(color: Color(0xFFFFC107), fontSize: 10, fontWeight: FontWeight.bold)),
+            child: Text('${value.toInt()}%', style: const TextStyle(color: Color(0xFFFFC107), fontWeight: FontWeight.bold, fontSize: 12)),
           ),
-      ]),
-    );
-  }
-}
-
-class _TransactionTable extends StatelessWidget {
-  final CaptureResponse response;
-  const _TransactionTable({required this.response});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0, color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade200)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(children: [
-          _TableRow(icon: Icons.tag, label: 'Transaction ID', value: response.transactionId),
-          const Divider(height: 24),
-          _TableRow(icon: Icons.fingerprint, label: 'Fingers Captured', value: response.results.length.toString()),
-          const Divider(height: 24),
-          _TableRow(icon: Icons.security, label: 'Liveness Check', value: response.results.every((r) => r.livenessPassed) ? 'Passed ✓' : 'Failed ❌', isStatus: true),
-        ]),
+        ],
       ),
     );
   }
 }
 
-class _TableRow extends StatelessWidget {
-  final IconData icon;
+class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
-  final bool isStatus;
-  const _TableRow({required this.icon, required this.label, required this.value, this.isStatus = false});
+  final Color? valueColor;
+  const _InfoRow({required this.label, required this.value, this.valueColor});
 
   @override
   Widget build(BuildContext context) {
-     return Row(children: [
-        Icon(icon, size: 16, color: Colors.grey),
-        const SizedBox(width: 12),
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-        const Spacer(),
-        Text(value, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: isStatus ? (value.contains('Passed') ? Colors.green : Colors.red) : Colors.black87)),
-     ]);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+          const Spacer(),
+          Text(value, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: valueColor ?? Colors.black87)),
+        ],
+      ),
+    );
+  }
+}
+
+class _FingerScoreItem extends StatelessWidget {
+  final FingerResult finger;
+  const _FingerScoreItem({required this.finger});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = finger.fingerId.toUpperCase().replaceAll('_', ' ');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(finger.status == FingerStatus.success ? Icons.check_circle : Icons.error, color: finger.status == FingerStatus.success ? Colors.green : Colors.red, size: 20),
+          const SizedBox(width: 12),
+          Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+            decoration: BoxDecoration(color: const Color(0xFFE8F5E9), borderRadius: BorderRadius.circular(8)),
+            child: Text('Q: ${finger.qualityScore.toInt()}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -703,12 +628,12 @@ class ScannerOverlayPainter extends CustomPainter {
     final rect = Rect.fromCenter(center: Offset(centerX, centerY), width: boxWidth, height: boxHeight);
     
     final paint = Paint()
-      ..color = Colors.white
+      ..color = const Color(0xFFFFC107)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
+      ..strokeWidth = 3.0;
 
     // Outer Rounded Box
-    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(20)), paint);
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(24)), paint);
 
     // If capturing 4 fingers, draw 4 vertical slots
     if (mode == CaptureMode.leftFour || mode == CaptureMode.rightFour) {
@@ -716,11 +641,11 @@ class ScannerOverlayPainter extends CustomPainter {
         final slotPaint = Paint()
           ..color = Colors.white.withOpacity(0.3)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0;
+          ..strokeWidth = 1.2;
         
         for (int i = 1; i < 4; i++) {
             final x = rect.left + (slotWidth * i);
-            canvas.drawLine(Offset(x, rect.top + 20), Offset(x, rect.bottom - 20), slotPaint);
+            canvas.drawLine(Offset(x, rect.top + 30), Offset(x, rect.bottom - 30), slotPaint);
         }
     }
   }
