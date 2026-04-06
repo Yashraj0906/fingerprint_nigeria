@@ -83,32 +83,37 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun handleInitialize(call: MethodCall, result: Result) {
-        val ctx = context ?: return result.error("DEVICE_UNSUPPORTED", "No application context", null)
-        val lo  = lifecycleOwner ?: return result.error("DEVICE_UNSUPPORTED", "Activity not attached", null)
+        try {
+            val ctx = context ?: return result.error("DEVICE_UNSUPPORTED", "No application context", null)
+            val lo  = lifecycleOwner ?: return result.error("DEVICE_UNSUPPORTED", "Activity not attached", null)
 
-        val args = call.arguments as? Map<*, *>
-        debugMode = args?.get("debugMode") as? Boolean ?: false
+            val args = call.arguments as? Map<*, *>
+            debugMode = args?.get("debugMode") as? Boolean ?: false
 
-        @Suppress("DEPRECATION")
-        if (!OpenCVLoader.initDebug()) {
-            Log.e(TAG, "OpenCV init failed — ensure opencv-android-4.8.x.aar is in android/libs/")
-            return result.error("DEVICE_UNSUPPORTED", "OpenCV init failed", null)
+            @Suppress("DEPRECATION")
+            if (!OpenCVLoader.initDebug()) {
+                Log.e(TAG, "OpenCV init failed — ensure opencv-android-4.8.x.aar is in android/libs/")
+                return result.error("DEVICE_UNSUPPORTED", "OpenCV init failed", null)
+            }
+            
+            cameraManager = CameraManager(ctx)
+            captureEngine = CaptureEngine(
+                cameraManager  = cameraManager!!,
+                feedbackSink   = feedbackSink,
+                lifecycleOwner = lo,
+                debugMode      = debugMode,
+                deviceProfile  = DeviceProfiler.profile(ctx)
+            )
+
+            // Create texture for preview
+            textureEntry = textureRegistry?.createSurfaceTexture()
+            val textureId = textureEntry?.id() ?: -1L
+            
+            result.success(textureId)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Initialize FATAL: ${e.javaClass.simpleName}: ${e.message}", e)
+            result.error("INIT_FAILED", "SDK init failed: ${e.message}", null)
         }
-        
-        cameraManager = CameraManager(ctx)
-        captureEngine = CaptureEngine(
-            cameraManager  = cameraManager!!,
-            feedbackSink   = feedbackSink,
-            lifecycleOwner = lo,
-            debugMode      = debugMode,
-            deviceProfile  = DeviceProfiler.profile(ctx)
-        )
-
-        // Create texture for preview
-        textureEntry = textureRegistry?.createSurfaceTexture()
-        val textureId = textureEntry?.id() ?: -1L
-        
-        result.success(textureId)
     }
 
     private fun handleStartCapture(call: MethodCall, result: Result) {

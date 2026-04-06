@@ -165,6 +165,9 @@ class CaptureEngine(
                     scope.launch {
                         try {
                             processFrame(frame)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "FATAL frame error caught: ${t.javaClass.simpleName}: ${t.message}")
+                            runCatching { frame.close() }
                         } finally {
                             isProcessing.set(false)
                         }
@@ -344,8 +347,8 @@ class CaptureEngine(
                         }
                         candidates.remove(finalFingerId)
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "ROI processing failed: ${e.message}")
+                } catch (e: Throwable) {
+                    Log.e(TAG, "ROI processing failed: ${e.javaClass.simpleName}: ${e.message}")
                 } finally {
                     roiMat?.release(); rawMat?.release(); enhanced?.release(); ridges?.release()
                 }
@@ -366,9 +369,9 @@ class CaptureEngine(
                     withContext(Dispatchers.Main) { onSessionComplete?.invoke(response) }
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             runCatching { frame.close() }
-            Log.e(TAG, "Frame error: ${e.message}", e)
+            Log.e(TAG, "Frame error: ${e.javaClass.simpleName}: ${e.message}", e)
             if (isCapturing && !completionSent) {
                 if (resultsHandled.compareAndSet(false, true)) {
                     isCapturing = false
