@@ -26,19 +26,5 @@ plugins {
 
 include ":app"
 
-// Load Flutter's plugin loader
-def flutterProjectRoot = rootProject.projectDir.parentFile
-def flutterSdkPath = {
-    def properties = new Properties()
-    file("local.properties").withInputStream { properties.load(it) }
-    def path = properties.getProperty("flutter.sdk")
-    if (path == null) {
-        path = System.getenv("FLUTTER_ROOT")
-    }
-    return path
-}()
-
-apply from: "$flutterSdkPath/packages/flutter_tools/gradle/app_plugin_loader.gradle"
-
 include ":fingerprint_sdk"
 project(":fingerprint_sdk").projectDir = new File("../../fingerprint_sdk/android")
