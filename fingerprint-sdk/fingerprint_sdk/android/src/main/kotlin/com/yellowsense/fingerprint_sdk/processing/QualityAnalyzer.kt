@@ -45,7 +45,7 @@ object QualityAnalyzer {
 
     fun analyze(image: Mat, fullGray: Mat? = null): QualityResult {
         if (image.empty()) {
-            return QualityResult(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Verdict.REJECT)
+            return QualityResult(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Verdict.REJECT)
         }
 
         // Try native first, fall back to Kotlin
