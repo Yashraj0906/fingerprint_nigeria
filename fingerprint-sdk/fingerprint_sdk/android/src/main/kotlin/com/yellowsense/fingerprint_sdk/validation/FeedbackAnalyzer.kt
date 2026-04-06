@@ -17,12 +17,13 @@ import org.opencv.imgproc.Imgproc
  */
 object FeedbackAnalyzer {
 
-    enum class FeedbackType { ALIGNMENT, LIGHTING, MOTION, DISTANCE, READY, PROCESSING }
+    enum class FeedbackType { ALIGNMENT, LIGHTING, MOTION, DISTANCE, READY, PROCESSING, STABILITY }
 
     data class Feedback(
         val type: FeedbackType,
         val message: String,
-        val confidence: Double
+        val confidence: Double,
+        val boxes: List<Rect>? = null
     )
 
     private const val MAX_EVENTS_PER_SEC = 10

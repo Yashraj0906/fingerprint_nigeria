@@ -59,6 +59,8 @@ class ValidationManager {
     /** Returns a start token; pass to onFrameEnd. */
     fun onFrameStart(): Long = System.currentTimeMillis()
 
+    fun isFrameStable(): Boolean = frameCount >= 3
+
     fun onFrameEnd(startToken: Long) {
         totalFrameMs += System.currentTimeMillis() - startToken
         frameCount++
