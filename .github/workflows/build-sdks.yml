@@ -31,12 +31,11 @@ jobs:
       - name: Flutter precache Android artifacts
         run: flutter precache --android
 
-      - name: Generate example Android project
+      - name: Get dependencies
         working-directory: fingerprint-sdk/example
         run: |
           flutter clean
           flutter pub get
-          yes "" | flutter create --platforms android . || true
 
       - name: Setup Gradle 8.4 (used for OpenCV standalone build)
         uses: gradle/actions/setup-gradle@v3
