@@ -282,12 +282,12 @@ class CaptureEngine(
                     if (roi.rect.width <= 0 || roi.rect.height <= 0) continue
                     
                     // Final safety clip for OpenCV Mat constructor
-                    val safeRect = Rect(
-                        roi.rect.x.coerceIn(0, gray.cols() - 1),
-                        roi.rect.y.coerceIn(0, gray.rows() - 1),
-                        roi.rect.width.coerceAtMost(gray.cols() - roi.rect.x).coerceAtLeast(1),
-                        roi.rect.height.coerceAtMost(gray.rows() - roi.rect.y).coerceAtLeast(1)
-                    )
+                    val sx = roi.rect.x.coerceIn(0, (gray.cols() - 1).coerceAtLeast(0))
+                    val sy = roi.rect.y.coerceIn(0, (gray.rows() - 1).coerceAtLeast(0))
+                    val sw = roi.rect.width.coerceAtMost((gray.cols() - sx).coerceAtLeast(1))
+                    val sh = roi.rect.height.coerceAtMost((gray.rows() - sy).coerceAtLeast(1))
+                    if (sw <= 0 || sh <= 0) continue
+                    val safeRect = Rect(sx, sy, sw, sh)
                     
                     roiMat   = Mat(gray, safeRect)
                     rawMat   = if (returnRaw || returnProcessed) Mat(bgr, safeRect).clone() else null
@@ -309,7 +309,7 @@ class CaptureEngine(
                     }
 
                     val liveness = if (performLiveness) {
-                        val bgrRoi = Mat(bgr, roi.rect)
+                        val bgrRoi = Mat(bgr, safeRect)
                         val res = livenessDetector.evaluate(roiMat, bgrRoi, bgr, finalFingerId)
                         bgrRoi.release()
                         res

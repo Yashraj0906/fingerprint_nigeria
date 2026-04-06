@@ -83,10 +83,15 @@ object FeedbackAnalyzer {
     private fun checkBlur(gray: Mat): Feedback? {
         val lap = Mat()
         Imgproc.Laplacian(gray, lap, CvType.CV_64F)
+        val mean = MatOfDouble()
         val stddev = MatOfDouble()
-        Core.meanStdDev(lap, MatOfDouble(), stddev)
+        Core.meanStdDev(lap, mean, stddev)
         lap.release()
-        val variance = stddev.toArray()[0].let { it * it }
+        val arr = stddev.toArray()
+        mean.release()
+        stddev.release()
+        if (arr.isEmpty()) return null
+        val variance = arr[0] * arr[0]
         return when {
             variance < 50  -> Feedback(FeedbackType.MOTION, "Hold very still — severe blur detected", 0.95)
             variance < 150 -> Feedback(FeedbackType.MOTION, "Hold steady — slight motion blur", 0.80)

@@ -23,7 +23,10 @@ import android.util.Base64
  */
 object ImageProcessor {
 
-    // ─── Frame Conversion ────────────────────────────────────────────────────
+    private var nv21Buffer: ByteArray? = null
+    private var yBufferData: ByteArray? = null
+    private var uBufferData: ByteArray? = null
+    private var vBufferData: ByteArray? = null
 
     fun yuvToMat(image: ImageProxy): Mat {
         val yPlane = image.planes[0]
@@ -34,12 +37,21 @@ object ImageProcessor {
         val uBuffer = uPlane.buffer
         val vBuffer = vPlane.buffer
 
-        val yBytes = ByteArray(yBuffer.remaining())
-        yBuffer.get(yBytes)
-        val uBytes = ByteArray(uBuffer.remaining())
-        uBuffer.get(uBytes)
-        val vBytes = ByteArray(vBuffer.remaining())
-        vBuffer.get(vBytes)
+        val yRem = yBuffer.remaining()
+        if (yBufferData == null || yBufferData!!.size < yRem) yBufferData = ByteArray(yRem)
+        yBuffer.get(yBufferData!!, 0, yRem)
+        
+        val uRem = uBuffer.remaining()
+        if (uBufferData == null || uBufferData!!.size < uRem) uBufferData = ByteArray(uRem)
+        uBuffer.get(uBufferData!!, 0, uRem)
+        
+        val vRem = vBuffer.remaining()
+        if (vBufferData == null || vBufferData!!.size < vRem) vBufferData = ByteArray(vRem)
+        vBuffer.get(vBufferData!!, 0, vRem)
+
+        val yBytes = yBufferData!!
+        val uBytes = uBufferData!!
+        val vBytes = vBufferData!!
 
         val yRowStride    = yPlane.rowStride
         val uvRowStride   = uPlane.rowStride
@@ -47,7 +59,9 @@ object ImageProcessor {
         val width  = image.width
         val height = image.height
 
-        val nv21 = ByteArray(width * height * 3 / 2)
+        val totalSize = width * height * 3 / 2
+        if (nv21Buffer == null || nv21Buffer!!.size < totalSize) nv21Buffer = ByteArray(totalSize)
+        val nv21 = nv21Buffer!!
         var pos = 0
 
         for (row in 0 until height) {
