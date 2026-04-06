@@ -226,7 +226,9 @@ object ImageProcessor {
             return listOf(FingerROI(0, fallbackRect, fallbackRect.area()))
         }
 
-        return sorted.mapIndexed { idx, (rect, area) -> FingerROI(idx, rect, area) }
+        val result = sorted.mapIndexed { idx, (rect, area) -> FingerROI(idx, rect, area) }
+        contours.forEach { it.release() }
+        return result
     }
 
     /**

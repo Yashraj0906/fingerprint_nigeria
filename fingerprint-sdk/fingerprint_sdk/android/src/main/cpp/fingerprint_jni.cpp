@@ -57,7 +57,18 @@ Java_com_yellowsense_fingerprint_1sdk_validation_LivenessDetector_nativeEvaluate
     std::string handModeStr(nativeHandMode);
     env->ReleaseStringUTFChars(handMode, nativeHandMode);
 
-    LivenessResult res = LivenessDetector::evaluate(*gray, *bgr, *fullBgr, handModeStr);
+    LivenessResult res;
+    res.passed = false;
+    res.confidence = 0.0;
+    try {
+        res = LivenessDetector::evaluate(*gray, *bgr, *fullBgr, handModeStr);
+    } catch (const cv::Exception& e) {
+        res.reason = std::string("JNI_CV_EXCEPTION: ") + e.what();
+    } catch (const std::exception& e) {
+        res.reason = std::string("JNI_STD_EXCEPTION: ") + e.what();
+    } catch (...) {
+        res.reason = std::string("JNI_UNKNOWN_EXCEPTION");
+    }
 
     jobject map = createJavaHashMap(env);
     putInMap(env, map, "passed", toJavaBool(env, res.passed));
@@ -78,8 +89,15 @@ Java_com_yellowsense_fingerprint_1sdk_processing_QualityAnalyzer_nativeAnalyze(
         JNIEnv* env, jobject thiz, jlong imageAddr) {
 
     cv::Mat* image = (cv::Mat*)imageAddr;
-    
-    QualityResult res = QualityAnalyzer::analyze(*image);
+    QualityResult res;
+    res.decision = QualityDecision::REJECT;
+    try {
+        res = QualityAnalyzer::analyze(*image);
+    } catch (const cv::Exception& e) {
+        res.guidance = std::string("JNI_CV_EXCEPTION: ") + e.what();
+    } catch (...) {
+        res.guidance = std::string("JNI_UNKNOWN_EXCEPTION");
+    }
 
     jobject map = createJavaHashMap(env);
     putInMap(env, map, "blurScore", toJavaFloat(env, res.blurScore));
@@ -107,7 +125,13 @@ Java_com_yellowsense_fingerprint_1sdk_processing_TemplateEncoder_nativeEncode(
 
     cv::Mat* image = (cv::Mat*)imageAddr;
     
-    TemplateResult res = TemplateEncoder::extractTemplate(*image);
+    TemplateResult res;
+    res.success = false;
+    try {
+        res = TemplateEncoder::extractTemplate(*image);
+    } catch (...) {
+        // Fallback
+    }
 
     if (!res.success) return nullptr;
 
