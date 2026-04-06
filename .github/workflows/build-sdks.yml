@@ -116,14 +116,22 @@ jobs:
           chmod +x gradlew
           ./gradlew :fingerprint_sdk:assembleRelease -POpenCV_DIR="${{ env.OpenCV_DIR }}" --no-daemon -x lintVitalRelease
 
+      - name: Build Example APK
+        working-directory: fingerprint-sdk/example
+        run: |
+          flutter build apk --release --no-pub --dart-define=OPENCV_DIR="${{ env.OpenCV_DIR }}"
+
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: fingerprint-sdk-android-aar
-          path: |
-            fingerprint-sdk/**/*.aar
-          retention-days: 30
-          if-no-files-found: error
+          path: fingerprint-sdk/fingerprint_sdk/android/build/outputs/aar/fingerprint_sdk-release.aar
+
+      - name: Upload Example APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-app-apk
+          path: fingerprint-sdk/example/build/app/outputs/flutter-apk/app-release.apk
           
       - name: Debug - List all AARs
         run: find . -name "*.aar"
