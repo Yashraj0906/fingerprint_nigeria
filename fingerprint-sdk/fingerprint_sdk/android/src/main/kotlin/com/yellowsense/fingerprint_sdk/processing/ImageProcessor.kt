@@ -7,6 +7,7 @@ import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 import java.io.ByteArrayOutputStream
 import android.util.Base64
+import android.util.Log
 
 /**
  * Full fingerprint processing pipeline with hardened segmentation.

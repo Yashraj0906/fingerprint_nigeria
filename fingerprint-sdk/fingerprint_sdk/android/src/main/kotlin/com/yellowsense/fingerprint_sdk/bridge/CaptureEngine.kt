@@ -73,6 +73,7 @@ class CaptureEngine(
     private val resultsHandled = java.util.concurrent.atomic.AtomicBoolean(false)
     private val isProcessing   = java.util.concurrent.atomic.AtomicBoolean(false)
     private var captureJob: Job? = null
+    private var timeoutJob: Job? = null
 
     private var onSessionComplete: ((Map<String, Any>) -> Unit)? = null
     private var onSessionError: ((String, String) -> Unit)? = null
@@ -148,7 +149,7 @@ class CaptureEngine(
         isLeftHand = fingersRequested.any { it.startsWith("LEFT_") }
 
         captureJob = scope.launch {
-            val timeoutJob = launch {
+            timeoutJob = launch {
                 delay(timeoutSeconds * 1000L)
                 if (isCapturing && !completionSent) {
                     completionSent = true
