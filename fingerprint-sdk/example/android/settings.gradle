@@ -31,3 +31,6 @@ plugins {
 }
 
 include ":app"
+
+include ":fingerprint_sdk"
+project(":fingerprint_sdk").projectDir = new File("../../fingerprint_sdk/android")
