@@ -113,7 +113,7 @@ jobs:
         working-directory: fingerprint-sdk/example/android
         run: |
           chmod +x gradlew
-          ./gradlew :fingerprint_sdk_standalone:assembleRelease -POpenCV_DIR="${{ env.OpenCV_DIR }}" --no-daemon -x lintVitalRelease
+          ./gradlew :fingerprint_sdk:assembleRelease -POpenCV_DIR="${{ env.OpenCV_DIR }}" --no-daemon -x lintVitalRelease
 
       - name: Build Example APK
         working-directory: fingerprint-sdk/example
