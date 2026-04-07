@@ -29,17 +29,9 @@ object QualityAnalyzer {
 
     enum class Verdict { ACCEPT, RETRY, REJECT }
 
-    private var nativeAvailable = false
+    private var nativeAvailable = true
 
-    init {
-        try {
-            System.loadLibrary("fingerprint_core")
-            nativeAvailable = true
-            Log.i(TAG, "Native JNI library loaded successfully")
-        } catch (e: Throwable) {
-            Log.w(TAG, "Native library not available, using Kotlin fallback: ${e.message}")
-        }
-    }
+    // Note: Library loading is now centralized in FingerprintSdkPlugin.initializeNative()
 
     private external fun nativeAnalyze(imageAddr: Long): Map<String, Any>
 

@@ -8,37 +8,60 @@
 #include "quality_analyzer.h"
 #include "template_encoder.h"
 
+#include <mutex>
+
 using namespace fingerprint;
+
+static std::once_flag g_init_flag;
+static jclass g_mapClass = nullptr;
+static jmethodID g_mapInit = nullptr;
+static jmethodID g_mapPut = nullptr;
+static jclass g_boolClass = nullptr;
+static jmethodID g_boolValueOf = nullptr;
+static jclass g_floatClass = nullptr;
+static jmethodID g_floatValueOf = nullptr;
+
+/**
+ * Thread-safe JNI cache initialization.
+ */
+void initializeJniCache(JNIEnv* env) {
+    std::call_once(g_init_flag, [env]() {
+        jclass localMapClass = env->FindClass("java/util/HashMap");
+        g_mapClass = (jclass)env->NewGlobalRef(localMapClass);
+        g_mapInit = env->GetMethodID(g_mapClass, "<init>", "()V");
+        g_mapPut = env->GetMethodID(g_mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+
+        jclass localBoolClass = env->FindClass("java/lang/Boolean");
+        g_boolClass = (jclass)env->NewGlobalRef(localBoolClass);
+        g_boolValueOf = env->GetStaticMethodID(g_boolClass, "valueOf", "(Z)Ljava/lang/Boolean;");
+
+        jclass localFloatClass = env->FindClass("java/lang/Float");
+        g_floatClass = (jclass)env->NewGlobalRef(localFloatClass);
+        g_floatValueOf = env->GetStaticMethodID(g_floatClass, "valueOf", "(F)Ljava/lang/Float;");
+    });
+}
 
 extern "C" {
 
 // Helper to create a Java HashMap
 jobject createJavaHashMap(JNIEnv* env) {
-    jclass mapClass = env->FindClass("java/util/HashMap");
-    jmethodID init = env->GetMethodID(mapClass, "<init>", "()V");
-    return env->NewObject(mapClass, init);
+    initializeJniCache(env);
+    return env->NewObject(g_mapClass, g_mapInit);
 }
 
 void putInMap(JNIEnv* env, jobject map, const char* key, jobject value) {
-    static jclass mapClass = nullptr;
-    static jmethodID put = nullptr;
-    if (mapClass == nullptr) {
-        mapClass = (jclass)env->NewGlobalRef(env->FindClass("java/util/HashMap"));
-        put = env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
-    }
-    env->CallObjectMethod(map, put, env->NewStringUTF(key), value);
+    initializeJniCache(env);
+    env->CallObjectMethod(map, g_mapPut, env->NewStringUTF(key), value);
 }
 
 jobject toJavaBool(JNIEnv* env, bool value) {
-    jclass boolClass = env->FindClass("java/lang/Boolean");
-    jmethodID valueOf = env->GetStaticMethodID(boolClass, "valueOf", "(Z)Ljava/lang/Boolean;");
-    return env->CallStaticObjectMethod(boolClass, valueOf, value);
+    initializeJniCache(env);
+    return env->CallStaticObjectMethod(g_boolClass, g_boolValueOf, value);
 }
 
 jobject toJavaFloat(JNIEnv* env, float value) {
-    jclass floatClass = env->FindClass("java/lang/Float");
-    jmethodID valueOf = env->GetStaticMethodID(floatClass, "valueOf", "(F)Ljava/lang/Float;");
-    return env->CallStaticObjectMethod(floatClass, valueOf, value);
+    initializeJniCache(env);
+    return env->CallStaticObjectMethod(g_floatClass, g_floatValueOf, value);
 }
 
 // ---------------------------------------------------------------------------

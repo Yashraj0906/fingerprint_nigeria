@@ -13,17 +13,9 @@ import java.nio.ByteOrder
 object TemplateEncoder {
 
     private const val TAG = "TemplateEncoder"
-    private var nativeAvailable = false
+    private var nativeAvailable = true
 
-    init {
-        try {
-            System.loadLibrary("fingerprint_core")
-            nativeAvailable = true
-            Log.i(TAG, "Native template encoder loaded successfully")
-        } catch (e: Throwable) {
-            Log.w(TAG, "Native library not available, using Kotlin fallback: ${e.message}")
-        }
-    }
+    // Note: Library loading is now centralized in FingerprintSdkPlugin.initializeNative()
 
     private external fun nativeEncode(imageAddr: Long): String?
 

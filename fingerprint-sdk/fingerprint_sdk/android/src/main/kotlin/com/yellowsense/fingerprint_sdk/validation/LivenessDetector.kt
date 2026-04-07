@@ -18,17 +18,9 @@ class LivenessDetector {
 
     companion object {
         private const val TAG = "LivenessDetector"
-        private var nativeAvailable = false
+        private var nativeAvailable = true
 
-        init {
-            try {
-                System.loadLibrary("fingerprint_core")
-                nativeAvailable = true
-                Log.i(TAG, "Native liveness library loaded successfully")
-            } catch (e: Throwable) {
-                Log.w(TAG, "Native library not available, using Kotlin fallback: ${e.message}")
-            }
-        }
+        // Note: Library loading is now centralized in FingerprintSdkPlugin.initializeNative()
     }
 
     private external fun nativeEvaluate(grayAddr: Long, bgrAddr: Long, fullBgrAddr: Long, handMode: String): Map<String, Any>

@@ -40,6 +40,41 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         const val EVENT_CHANNEL  = "com.yellowsense.fingerprint_sdk/feedback"
         const val SDK_VERSION    = "3.0.0"
         const val TAG            = "FingerprintSDK"
+
+        private var nativeLibraryLoaded = false
+
+        /**
+         * Ensures native libraries and OpenCV are initialized.
+         */
+        @JvmStatic
+        fun initializeNative(context: Context) {
+            if (nativeLibraryLoaded) return
+
+            Log.i(TAG, "Initializing Fingerprint SDK Native Layer (v$SDK_VERSION)...")
+
+            // 1. Initialize OpenCV
+            try {
+                if (OpenCVLoader.initDebug()) {
+                    Log.i(TAG, "OpenCV initialized successfully.")
+                } else {
+                    Log.e(TAG, "OpenCV initialization failed via initDebug().")
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "OpenCV initialization crashed: ${e.message}")
+            }
+
+            // 2. Load Native Core Library
+            try {
+                System.loadLibrary("fingerprint_core")
+                nativeLibraryLoaded = true
+                Log.i(TAG, "Native library 'libfingerprint_core.so' loaded correctly.")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "FATAL: Could not load libfingerprint_core.so: ${e.message}")
+                Log.e(TAG, "Ensure that the .so file and its dependencies (OpenCV) are bundled in the APK.")
+            } catch (e: Throwable) {
+                Log.e(TAG, "Unexpected error during native load: ${e.message}")
+            }
+        }
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -55,6 +90,9 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             }
             override fun onCancel(args: Any?) { feedbackSink = null }
         })
+
+        // Initialize native components immediately on attach
+        initializeNative(binding.applicationContext)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
