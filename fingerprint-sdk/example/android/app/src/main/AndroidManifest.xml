@@ -7,7 +7,7 @@
     <application
         android:label="YellowSense Biometric"
         android:name="${applicationName}"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@drawable/logo"
         android:theme="@style/LaunchTheme">
         <activity
             android:name=".MainActivity"
