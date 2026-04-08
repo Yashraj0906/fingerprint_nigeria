@@ -361,7 +361,7 @@ class CaptureEngine(
                             usedMediaPipe = true
                             emptyList()
                         } else {
-                            val r = handEstimate.bboxForFinger(FingerRole.THUMB)
+                            val r = handEstimate.bboxForFinger(FingerRole.THUMB, padPx = 16)
                             if (r == null) {
                                 emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.DISTANCE, "Move closer to the camera", 0.90))
                                 usedMediaPipe = true
@@ -383,45 +383,65 @@ class CaptureEngine(
                         emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.ALIGNMENT, "No hand detected", 0.92))
                         emptyList()
                     } else {
-                        // Label capture from MediaPipe (Dart often sends a placeholder e.g. RIGHT_INDEX for all single-finger flows).
-                        val slap = handEstimate.extendedSlapFingers()
-                        val n = slap.size
                         val thumbUp = handEstimate.isThumbExtended()
-                        when {
-                            n == 0 && thumbUp -> {
-                                // Only thumb is extended.
-                                val r = handEstimate.bboxForFinger(FingerRole.THUMB)
-                                if (r == null) {
-                                    usedMediaPipe = true
-                                    emptyList()
-                                } else {
-                                    mpSingleFingerId = "${handEstimate.handedness}_THUMB"
-                                    usedMediaPipe = true
-                                    listOf(ImageProcessor.FingerROI(0, r, r.area().toDouble()))
+                        val nonThumbRoles = handEstimate.extendedNonThumbRolesOrdered()
+
+                        // SINGLE_FINGER selection rule:
+                        // - If a non-thumb finger is extended, prefer it (thumb extension can be noisy).
+                        // - If multiple non-thumb fingers are extended, choose the strongest one if the
+                        //   best is clearly stronger than the 2nd; otherwise ask user to show only one.
+                        if (nonThumbRoles.isEmpty() && thumbUp) {
+                            // Only thumb is extended.
+                            val r = handEstimate.bboxForFinger(FingerRole.THUMB, padPx = 16)
+                            if (r == null) {
+                                usedMediaPipe = true
+                                emptyList()
+                            } else {
+                                mpSingleFingerId = "${handEstimate.handedness}_THUMB"
+                                usedMediaPipe = true
+                                listOf(ImageProcessor.FingerROI(0, r, r.area().toDouble()))
+                            }
+                        } else if (nonThumbRoles.isEmpty()) {
+                            emitFeedback(
+                                FeedbackAnalyzer.Feedback(
+                                    FeedbackAnalyzer.FeedbackType.ALIGNMENT,
+                                    "Raise exactly one finger toward the camera",
+                                    0.93
+                                )
+                            )
+                            usedMediaPipe = true
+                            emptyList()
+                        } else {
+                            val bestRole = when {
+                                nonThumbRoles.size == 1 -> nonThumbRoles.first()
+                                else -> {
+                                    val scored = nonThumbRoles
+                                        .map { role -> role to handEstimate.extensionStrength(role) }
+                                        .sortedByDescending { it.second }
+                                    val best = scored.first()
+                                    val second = scored.getOrNull(1)
+                                    val margin = 0.05f
+                                    if (second == null || best.second >= second.second + margin) best.first else null
                                 }
                             }
-                            n == 0 -> {
-                                // Neither thumb nor any non-thumb finger is detected as extended.
-                                emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.ALIGNMENT, "Raise exactly one finger toward the camera", 0.93))
+
+                            if (bestRole == null) {
+                                emitFeedback(
+                                    FeedbackAnalyzer.Feedback(
+                                        FeedbackAnalyzer.FeedbackType.ALIGNMENT,
+                                        "Show only ONE finger at a time",
+                                        0.94
+                                    )
+                                )
                                 usedMediaPipe = true
                                 emptyList()
-                            }
-                            n > 1 -> {
-                                emitFeedback(FeedbackAnalyzer.Feedback(FeedbackAnalyzer.FeedbackType.ALIGNMENT, "Show only ONE finger at a time", 0.94))
-                                usedMediaPipe = true
-                                emptyList()
-                            }
-                            else -> {
-                                // Exactly one non-thumb finger is extended.
-                                // Even if thumb is mistakenly flagged as extended, prefer the non-thumb finger
-                                // to avoid missing middle/little captures.
-                                val role = slap.first()
-                                val r = handEstimate.bboxForFinger(role)
+                            } else {
+                                val r = handEstimate.bboxForFinger(bestRole, padPx = 16)
                                 if (r == null) {
                                     usedMediaPipe = true
                                     emptyList()
                                 } else {
-                                    mpSingleFingerId = "${handEstimate.handedness}_${role.name}"
+                                    mpSingleFingerId = "${handEstimate.handedness}_${bestRole.name}"
                                     usedMediaPipe = true
                                     listOf(ImageProcessor.FingerROI(0, r, r.area().toDouble()))
                                 }
@@ -712,8 +732,8 @@ class CaptureEngine(
 
                     val minAcceptScore = when {
                         requestedMode == "LEFT_FOUR" || requestedMode == "RIGHT_FOUR" -> 32.0
-                        requestedMode == "LEFT_THUMB" || requestedMode == "RIGHT_THUMB" -> 34.0
-                        requestedMode == "SINGLE_FINGER" -> 36.0
+                        requestedMode == "LEFT_THUMB" || requestedMode == "RIGHT_THUMB" -> 36.0
+                        requestedMode == "SINGLE_FINGER" -> 40.0
                         strictMode -> 32.0
                         else -> 24.0
                     }
@@ -789,8 +809,8 @@ class CaptureEngine(
                     val fingerCandidates = candidates[finalFingerId] ?: continue
                     val minStableCandidates = when {
                         requestedMode == "LEFT_FOUR" || requestedMode == "RIGHT_FOUR" -> 3
-                        requestedMode == "LEFT_THUMB" || requestedMode == "RIGHT_THUMB" -> 3
-                        requestedMode == "SINGLE_FINGER" -> 4
+                        requestedMode == "LEFT_THUMB" || requestedMode == "RIGHT_THUMB" -> 4
+                        requestedMode == "SINGLE_FINGER" -> 5
                         strictMode -> 2
                         else -> 1
                     }
@@ -799,7 +819,9 @@ class CaptureEngine(
                         // If livenessPassed candidates exist, prefer quality from those first.
                         val livenessPool = fingerCandidates.filter { it.livenessPassed }
                         val pool = if (livenessPool.isNotEmpty()) livenessPool else fingerCandidates
-                        val best = pool.maxByOrNull { it.qualityScore }!!
+                        // Tie-breaker: also favor centering (ROI alignment). This tends to increase the
+                        // actual quality score returned to the user after capture.
+                        val best = pool.maxByOrNull { it.qualityScore * 0.85 + it.centeringScore * 0.15 }!!
                         finaliseCapture(finalFingerId, best)
                         fingerCandidates.filter { it !== best }.forEach {
                             it.enhanced.release(); it.ridges.release(); it.raw?.release()
