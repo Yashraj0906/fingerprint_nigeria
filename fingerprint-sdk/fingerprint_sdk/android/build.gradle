@@ -66,6 +66,11 @@ android {
     }
 
     buildTypes {
+        // Flutter builds use a "profile" variant; provide it and fall back to existing deps.
+        profile {
+            initWith debug
+            matchingFallbacks = ['debug', 'release']
+        }
         release {
             minifyEnabled false
         }
