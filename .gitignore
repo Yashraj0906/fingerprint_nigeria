@@ -30,3 +30,7 @@ Thumbs.db
 temp_backup/
 *.bak
 *~
+
+# Repo docs & changelog (kept local for now)
+/docs/structure/
+/CHANGES.md

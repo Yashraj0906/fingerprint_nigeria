@@ -81,8 +81,11 @@ class HandDetector:
         self.mp_drawing = mp.solutions.drawing_utils
 
         self.hands = self.mp_hands.Hands(
-            static_image_mode=True,     # per-frame, no cross-frame tracking
+            # Use tracking mode for better stability on live frames/videos.
+            # (Works fine for single images too; MediaPipe will still run detection.)
+            static_image_mode=False,
             max_num_hands=1,
+            model_complexity=1,
             min_detection_confidence=detection_confidence,
             min_tracking_confidence=tracking_confidence,
         )
@@ -167,7 +170,7 @@ class HandDetector:
         geometry_guidance = self._analyze_hand_geometry(lm)
         if geometry_guidance:
             # Still extract fingers so caller has bbox data, but guidance takes priority
-            fingers = self._extract_finger_crops(lm, frame, width, height)
+            fingers = self._extract_finger_crops(lm, frame, width, height, hand_side=hand_side)
             detected_count = sum(1 for f in fingers.values() if f.detected)
             index_crop  = fingers.get("INDEX")
             finger_crop = index_crop.crop if index_crop and index_crop.detected else None
@@ -182,7 +185,7 @@ class HandDetector:
             )
 
         # ── Per-finger extension + crop ───────────────────────────────────────
-        fingers      = self._extract_finger_crops(lm, frame, width, height)
+        fingers      = self._extract_finger_crops(lm, frame, width, height, hand_side=hand_side)
         all_vertical = all(f.is_vertical for f in fingers.values() if f.detected)
 
         detected_count = sum(1 for f in fingers.values() if f.detected)
@@ -283,12 +286,18 @@ class HandDetector:
 
         return None  # geometry is good
 
-    def _extract_finger_crops(self, lm, frame: np.ndarray,
-                              width: int, height: int) -> Dict[str, "FingerCrop"]:
+    def _extract_finger_crops(
+        self,
+        lm,
+        frame: np.ndarray,
+        width: int,
+        height: int,
+        hand_side: Optional[str] = None,
+    ) -> Dict[str, "FingerCrop"]:
         """Extract per-finger crops and extension state from hand landmarks."""
         fingers: Dict[str, FingerCrop] = {}
         for name, ids in _FINGER_LANDMARKS.items():
-            if not self._is_finger_extended(lm, ids):
+            if not self._is_finger_extended(lm, name, ids, hand_side=hand_side):
                 fingers[name] = FingerCrop(detected=False, crop=None, bbox=None)
                 continue
             bbox = self._landmarks_to_bbox(lm, ids, width, height)
@@ -318,20 +327,60 @@ class HandDetector:
             return None
         return (x1, y1, w, h)
 
-    def _is_finger_extended(self, lm, ids: list) -> bool:
+    def _is_finger_extended(
+        self,
+        lm,
+        finger_name: str,
+        ids: list,
+        hand_side: Optional[str] = None,
+    ) -> bool:
         """
         Returns True only if the finger is actually raised/extended.
 
-        Check: tip.y must be clearly ABOVE the MCP base joint in image coordinates
-        (y increases downward, so tip.y < mcp.y means the tip is higher on screen).
+        For INDEX/MIDDLE/RING/LITTLE:
+          Use a multi-joint check: TIP above DIP above PIP above MCP in image coords.
+          This is more robust than only comparing TIP vs MCP (which can false-trigger
+          when the finger is partially curled).
 
-        A folded/curled finger has its tip near or below the MCP joint.
-        Threshold of 0.04 (4% of normalised image height) prevents false positives
-        on nearly-flat palms.
+        For THUMB:
+          Use a handedness-aware horizontal rule (thumb extends sideways relative
+          to the palm). Vertical-only rules are unreliable for thumbs.
         """
-        tip_y  = lm.landmark[ids[-1]].y   # fingertip
-        base_y = lm.landmark[ids[0]].y    # MCP knuckle
-        return tip_y < base_y - 0.04
+        eps = 0.02  # 2% of frame height in normalized coords
+
+        if finger_name.upper() == "THUMB":
+            # Landmarks: 1 (CMC), 2 (MCP), 3 (IP), 4 (TIP)
+            tip = lm.landmark[4]
+            ip  = lm.landmark[3]
+            mcp = lm.landmark[2]
+
+            # If handedness is unknown, fall back to a conservative heuristic:
+            # thumb tip should be clearly separated from index MCP on X axis.
+            if not hand_side:
+                idx_mcp = lm.landmark[5]
+                return abs(tip.x - idx_mcp.x) > 0.10
+
+            side = hand_side.strip().upper()
+            # MediaPipe labels are "Left"/"Right" from the SUBJECT's perspective.
+            # For a right hand, thumb is typically on the left side of the image;
+            # for a left hand, thumb is typically on the right side of the image.
+            if side == "RIGHT":
+                return (tip.x < ip.x - eps) and (ip.x < mcp.x + 0.05)
+            if side == "LEFT":
+                return (tip.x > ip.x + eps) and (ip.x > mcp.x - 0.05)
+            # Unknown string → fallback
+            idx_mcp = lm.landmark[5]
+            return abs(tip.x - idx_mcp.x) > 0.10
+
+        # Non-thumb fingers: ids = [MCP, PIP, DIP, TIP]
+        mcp_y = lm.landmark[ids[0]].y
+        pip_y = lm.landmark[ids[1]].y
+        dip_y = lm.landmark[ids[2]].y
+        tip_y = lm.landmark[ids[3]].y
+
+        # Extended finger should have a clear monotonic upward chain.
+        # (y increases downward, so "upward" means smaller y)
+        return (tip_y < dip_y - eps) and (dip_y < pip_y - eps) and (pip_y < mcp_y - eps)
 
     def _is_landmarks_vertical(self, lm, ids: list, tolerance: int = 40) -> bool:
         """Check if the finger defined by ids is roughly vertical."""

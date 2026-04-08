@@ -91,7 +91,23 @@ object ImageProcessor {
                 yuv.put(0, 0, nv21)
                 val bgr = Mat()
                 Imgproc.cvtColor(yuv, bgr, Imgproc.COLOR_YUV2BGR_NV21)
-                return bgr
+
+                // Normalize orientation so downstream segmentation sees consistent upright frames.
+                val rotation = image.imageInfo.rotationDegrees
+                if (rotation == 0) return bgr
+
+                val rotated = Mat()
+                when (rotation) {
+                    90 -> Core.rotate(bgr, rotated, Core.ROTATE_90_CLOCKWISE)
+                    180 -> Core.rotate(bgr, rotated, Core.ROTATE_180)
+                    270 -> Core.rotate(bgr, rotated, Core.ROTATE_90_COUNTERCLOCKWISE)
+                    else -> {
+                        bgr.release()
+                        return Mat()
+                    }
+                }
+                bgr.release()
+                return rotated
             } finally {
                 yuv.release()
             }
@@ -113,7 +129,8 @@ object ImageProcessor {
             if (src.channels() == 3) Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY)
             else src.copyTo(gray)
 
-            val clahe = Imgproc.createCLAHE(3.0, Size(8.0, 8.0))
+            // Slightly stronger local contrast for ridge clarity on finger ROIs
+            val clahe = Imgproc.createCLAHE(3.6, Size(8.0, 8.0))
             clahe.apply(gray, claheOut)
             
             Imgproc.GaussianBlur(claheOut, blurred, Size(3.0, 3.0), 1.0)
@@ -148,16 +165,15 @@ object ImageProcessor {
         try {
             gray.convertTo(temp32, CvType.CV_32F)
 
-            for ((dx, dy) in listOf(Pair(1,0), Pair(1,1), Pair(0,1), Pair(-1,1))) {
-                val sx = Mat(); val sy = Mat(); val mag = Mat()
-                try {
-                    Imgproc.Sobel(temp32, sx, CvType.CV_32F, dx.coerceIn(0,1), 0, 3)
-                    Imgproc.Sobel(temp32, sy, CvType.CV_32F, 0, dy.coerceIn(0,1), 3)
-                    Core.magnitude(sx, sy, mag)
-                    Core.max(result, mag, result)
-                } finally {
-                    sx.release(); sy.release(); mag.release()
-                }
+            val sx = Mat()
+            val sy = Mat()
+            try {
+                Imgproc.Sobel(temp32, sx, CvType.CV_32F, 1, 0, 3)
+                Imgproc.Sobel(temp32, sy, CvType.CV_32F, 0, 1, 3)
+                Core.magnitude(sx, sy, result)
+            } finally {
+                sx.release()
+                sy.release()
             }
 
             val out = Mat()
@@ -221,7 +237,14 @@ object ImageProcessor {
         
         try {
             Imgproc.cvtColor(src, ycrcb, Imgproc.COLOR_BGR2YCrCb)
-            Core.inRange(ycrcb, Scalar(0.0, 133.0, 77.0), Scalar(255.0, 173.0, 127.0), skinMask)
+            // Slightly widened YCrCb skin bounds to improve recall across lighting and skin tones.
+            // (Keeps false positives controlled by later density/shape filters.)
+            Core.inRange(
+                ycrcb,
+                Scalar(0.0, 127.0, 67.0),   // Y, Cr, Cb (lower)
+                Scalar(255.0, 185.0, 135.0),// Y, Cr, Cb (upper)
+                skinMask
+            )
             
             val closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(7.0, 7.0))
             val openKernel  = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(5.0, 5.0))
@@ -232,7 +255,8 @@ object ImageProcessor {
             Imgproc.findContours(skinMask, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
             val imageArea = (src.rows() * src.cols()).toDouble()
-            val minArea   = imageArea * 0.005
+            // Allow slightly smaller ROIs so far-away hands still yield candidates.
+            val minArea   = imageArea * 0.003
             val maxArea   = imageArea * 0.45
 
             val rects = mutableListOf<Pair<Rect, Double>>()
@@ -241,20 +265,37 @@ object ImageProcessor {
                 val area = Imgproc.contourArea(c)
                 val aspect = rect.width.toDouble() / rect.height.toDouble()
                 
-                if (area in minArea..maxArea && aspect < 1.3 && rect.height >= rect.width) {
+                // Accept a bit more rotation/skew than strict portrait-only fingers.
+                if (area in minArea..maxArea && aspect < 1.6 && rect.height >= (rect.width * 0.9)) {
+                    // Mask density inside bounding rect: reject non-hand blobs.
+                    val safeX = rect.x.coerceIn(0, (skinMask.cols() - 1).coerceAtLeast(0))
+                    val safeY = rect.y.coerceIn(0, (skinMask.rows() - 1).coerceAtLeast(0))
+                    val safeW = rect.width.coerceAtMost((skinMask.cols() - safeX).coerceAtLeast(1))
+                    val safeH = rect.height.coerceAtMost((skinMask.rows() - safeY).coerceAtLeast(1))
+                    val safeRect = Rect(safeX, safeY, safeW, safeH)
+                    val maskRoi = Mat(skinMask, safeRect)
+                    val density = Core.countNonZero(maskRoi).toDouble() / (safeRect.area().toDouble().coerceAtLeast(1.0))
+                    maskRoi.release()
+                    // Lowered slightly to avoid rejecting fingers with specular highlights / motion blur.
+                    if (density < 0.22) continue
+
                     val splits = trySplitMergedFingers(c, rect, maxFingers)
                     if (splits.isNotEmpty()) rects.addAll(splits) else rects.add(Pair(rect, area))
                 }
             }
 
             val sorted = rects
-                .filter { (r, a) -> (r.width.toDouble() / r.height.toDouble()) < 1.4 && a > imageArea * 0.003 }
+                .filter { (r, a) ->
+                    (r.width.toDouble() / r.height.toDouble()) < 1.6 &&
+                    a > imageArea * 0.0025 &&
+                    r.height >= 60 && r.width >= 35
+                }
                 .sortedBy { it.first.x }
                 .take(maxFingers)
 
             if (sorted.isEmpty()) {
-                val fallbackRect = Rect((src.cols() * 0.20).toInt(), (src.rows() * 0.10).toInt(), (src.cols() * 0.60).toInt(), (src.rows() * 0.80).toInt())
-                return listOf(FingerROI(0, fallbackRect, fallbackRect.area()))
+                // Fail closed: never invent a synthetic ROI when no finger is detected.
+                return emptyList()
             }
 
             return sorted.mapIndexed { idx, (rect, area) -> FingerROI(idx, rect, area) }
@@ -332,9 +373,12 @@ object ImageProcessor {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     fun matToBitmap(mat: Mat): Bitmap {
-        val display = if (mat.channels() == 1) {
-            val rgb = Mat(); Imgproc.cvtColor(mat, rgb, Imgproc.COLOR_GRAY2BGRA); rgb
-        } else mat
+        val display = when (mat.channels()) {
+            1 -> Mat().also { Imgproc.cvtColor(mat, it, Imgproc.COLOR_GRAY2BGRA) }
+            3 -> Mat().also { Imgproc.cvtColor(mat, it, Imgproc.COLOR_BGR2RGBA) }
+            4 -> mat
+            else -> Mat().also { mat.copyTo(it) }
+        }
         val bmp = Bitmap.createBitmap(display.cols(), display.rows(), Bitmap.Config.ARGB_8888)
         Utils.matToBitmap(display, bmp)
         if (display !== mat) display.release()

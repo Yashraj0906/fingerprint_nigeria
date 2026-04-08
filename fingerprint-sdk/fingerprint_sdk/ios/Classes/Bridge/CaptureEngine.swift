@@ -146,16 +146,35 @@ final class CaptureEngine {
         let totalRoiArea  = segments.reduce(0.0) { $0 + $1.area }
         let roiRatio      = Double(totalRoiArea / frameArea)
 
-        // Emit feedback (throttled)
-        if let feedback = FeedbackAnalyzer.analyze(
+        // Emit feedback (throttled) and gate capture on READY in strict modes.
+        let feedback = FeedbackAnalyzer.analyze(
             image: cgImage,
             detectedFingers: segments.count,
             expectedFingers: expectedCount,
             roiAreaRatio: roiRatio
-        ) {
+        )
+        if let feedback {
             emitFeedback(feedback)
             if debugMode { os_log("Feedback: %{public}s — %{public}s",
                                    log: log, type: .debug, feedback.type.rawValue, feedback.message) }
+        }
+
+        let requestedMode = inferModeFromRequestedFingers()
+        if requestedMode == "LEFT_FOUR" || requestedMode == "RIGHT_FOUR" {
+            if segments.count < 4 {
+                emitFeedback(FeedbackAnalyzer.Feedback(type: .ALIGNMENT, message: "Show all 4 fingers clearly", confidence: 0.95))
+                return
+            }
+        }
+        if requestedMode == "LEFT_THUMB" || requestedMode == "RIGHT_THUMB" || requestedMode == "SINGLE_FINGER" {
+            if segments.count < 1 {
+                emitFeedback(FeedbackAnalyzer.Feedback(type: .ALIGNMENT, message: "Show exactly ONE finger clearly", confidence: 0.95))
+                return
+            }
+            if segments.count > 1 {
+                emitFeedback(FeedbackAnalyzer.Feedback(type: .ALIGNMENT, message: "Show only one finger — hide all others", confidence: 0.95))
+                return
+            }
         }
 
         // Distance guard
@@ -170,11 +189,8 @@ final class CaptureEngine {
             }
         }
 
-        // Only process when READY
-        guard let lastFeedback = FeedbackAnalyzer.analyze(
-            image: cgImage, detectedFingers: segments.count,
-            expectedFingers: expectedCount, roiAreaRatio: roiRatio
-        ), lastFeedback.type == .READY else { return }
+        // Only process when READY (do not call analyzer twice; it is throttled).
+        if let feedback, feedback.type != .READY { return }
 
         // Process each detected finger
         for roi in segments {
@@ -312,6 +328,22 @@ final class CaptureEngine {
         case "LEFT_LITTLE":  return 10
         default:             return 0
         }
+    }
+
+    private func inferModeFromRequestedFingers() -> String {
+        let active = config.fingersRequested.filter { !config.missingFingers.contains($0) }
+        if active.count == 1 {
+            switch active[0] {
+            case "LEFT_THUMB": return "LEFT_THUMB"
+            case "RIGHT_THUMB": return "RIGHT_THUMB"
+            default: return "SINGLE_FINGER"
+            }
+        }
+        let rightFour = ["RIGHT_INDEX", "RIGHT_MIDDLE", "RIGHT_RING", "RIGHT_LITTLE"]
+        let leftFour  = ["LEFT_INDEX", "LEFT_MIDDLE", "LEFT_RING", "LEFT_LITTLE"]
+        if active.count == 4 && Set(active) == Set(rightFour) { return "RIGHT_FOUR" }
+        if active.count == 4 && Set(active) == Set(leftFour)  { return "LEFT_FOUR" }
+        return "CUSTOM_SEQUENCE"
     }
 }
 

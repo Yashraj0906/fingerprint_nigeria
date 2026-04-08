@@ -144,7 +144,8 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 feedbackSink   = feedbackSink,
                 lifecycleOwner = lo,
                 debugMode      = debugMode,
-                deviceProfile  = DeviceProfiler.profile(ctx)
+                deviceProfile  = DeviceProfiler.profile(ctx),
+                appContext     = ctx.applicationContext
             )
 
             // Create texture for preview
@@ -200,6 +201,7 @@ class FingerprintSdkPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             captureEngine?.destroy()
             cameraManager?.destroy()
             textureEntry?.release()
+            com.yellowsense.fingerprint_sdk.handpose.HandPoseEstimator.close()
         } catch (e: Exception) {
             Log.w(TAG, "Error during cleanup: ${e.message}")
         } finally {

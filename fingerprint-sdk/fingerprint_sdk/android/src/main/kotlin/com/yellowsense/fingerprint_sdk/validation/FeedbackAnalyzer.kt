@@ -17,7 +17,7 @@ import org.opencv.imgproc.Imgproc
  */
 object FeedbackAnalyzer {
 
-    enum class FeedbackType { ALIGNMENT, LIGHTING, MOTION, DISTANCE, READY, PROCESSING, STABILITY }
+    enum class FeedbackType { ALIGNMENT, LIGHTING, MOTION, DISTANCE, READY, PROCESSING, STABILITY, WARNING }
 
     data class Feedback(
         val type: FeedbackType,
@@ -59,7 +59,7 @@ object FeedbackAnalyzer {
         prevFrame?.release()
         prevFrame = gray.clone()
 
-        return Feedback(FeedbackType.READY, "Hold steady — capturing", 0.95)
+        return Feedback(FeedbackType.READY, "Hold steady — capturing a clear frame", 0.95)
     }
 
     fun reset() {
@@ -93,8 +93,8 @@ object FeedbackAnalyzer {
         if (arr.isEmpty()) return null
         val variance = arr[0] * arr[0]
         return when {
-            variance < 50  -> Feedback(FeedbackType.MOTION, "Hold very still — severe blur detected", 0.95)
-            variance < 150 -> Feedback(FeedbackType.MOTION, "Hold steady — slight motion blur", 0.80)
+            variance < 80  -> Feedback(FeedbackType.MOTION, "Hold very still — image is too blurry for a clear capture", 0.95)
+            variance < 220 -> Feedback(FeedbackType.MOTION, "Hold steadier — slight blur, need a sharper frame", 0.82)
             else           -> null
         }
     }

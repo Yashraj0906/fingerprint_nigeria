@@ -528,6 +528,10 @@ function getHandSide() {
   return v.startsWith('LEFT') ? 'LEFT' : 'RIGHT';
 }
 
+function modeToBackendHand(mode) {
+  return String(mode || '').startsWith('LEFT') ? 'LEFT' : 'RIGHT';
+}
+
 async function analyzeLoop() {
   if (!running) return;
   if (analyzing || videoEl.readyState < 2) { setTimeout(analyzeLoop, 100); return; }
@@ -1061,7 +1065,7 @@ function resetCapture() {
   setAvgQ(0);
   // Redraw clean canvas
   if (videoEl.srcObject) {
-    overlayCtx.drawImage(videoEl, 0, 0, liveCanvas.width, liveCanvas.height);
+    overlayCtx.drawImage(videoEl, 0, 0, overlayCanvas.width, overlayCanvas.height);
   }
 }
 
@@ -1110,7 +1114,8 @@ function setGuide(msg, type) {
 // Actions: send to backend, download
 // ─────────────────────────────────────────────────────────────────────────────
 async function sendToBackend() {
-  const hand = document.getElementById('handSel').value;
+  const selectedMode = document.getElementById('handSel').value;
+  const hand = modeToBackendHand(selectedMode);
   // Grab current full frame and send to /api/capture/multi for template encoding
   if (!Object.keys(capturedData).length) return;
 
@@ -1126,7 +1131,6 @@ async function sendToBackend() {
           '/4 fingers. Switch to Enroll tab to save.');
     // Cache templates for enroll + swap thumbnails for enhanced backend crops
     enrollBuffer = {};
-    const hand = document.getElementById('handSel').value;
     (data.results||[]).forEach(r => {
       if (r.status === 'success' && r.template) {
         enrollBuffer[r.finger_id] = { finger_id:r.finger_id, template:r.template,

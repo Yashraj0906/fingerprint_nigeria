@@ -28,8 +28,8 @@ CaptureResult processFingerImage(const std::vector<uint8_t>& jpegBytes) {
     }
 
     result.quality  = QualityAnalyzer::analyze(image);
-    // Note: evaluate requires full image and cropped + hand mode. For simple processFingerImage, pass image to all and "Right" as default.
-    result.liveness = LivenessDetector::evaluate(image, image, image, "Right");
+    // For a generic single crop, run strict single-finger liveness mode.
+    result.liveness = LivenessDetector::evaluate(image, image, image, "SINGLE_FINGER");
 
     // Only run expensive template extraction when quality + liveness pass
     bool qualityOk  = (result.quality.decision != QualityDecision::REJECT);

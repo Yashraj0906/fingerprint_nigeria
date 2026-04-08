@@ -26,6 +26,34 @@ _FINGER_POSITION = {
 
 # Finger key → full ID suffix
 _FINGER_KEYS = ["THUMB", "INDEX", "MIDDLE", "RING", "LITTLE"]
+_FOUR_FINGER_KEYS = ["INDEX", "MIDDLE", "RING", "LITTLE"]
+
+
+def _normalize_side(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    side = value.strip().upper()
+    if side in ("LEFT", "RIGHT"):
+        return side
+    return None
+
+
+def _side_from_mode(mode: str) -> Optional[str]:
+    mode_upper = (mode or "").strip().upper()
+    if mode_upper.startswith("LEFT_"):
+        return "LEFT"
+    if mode_upper.startswith("RIGHT_"):
+        return "RIGHT"
+    return None
+
+
+def _extended_fingers(hand) -> List[str]:
+    visible: List[str] = []
+    for finger_key in _FINGER_KEYS:
+        fc = hand.fingers.get(finger_key)
+        if fc is not None and fc.detected:
+            visible.append(finger_key)
+    return visible
 
 
 # ── Single-finger endpoint (existing) ─────────────────────────────────────────
@@ -64,8 +92,16 @@ def process_multi_capture(request: MultiCaptureRequest):
     Each finger is quality-checked + liveness-checked + template-encoded
     independently using its own crop (not the full frame).
     """
-    hand_prefix = request.hand.upper()  # "RIGHT" or "LEFT"
-    finger_ids  = [f"{hand_prefix}_{k}" for k in _FINGER_KEYS]
+    hand_prefix = _normalize_side(request.hand)
+    if hand_prefix is None:
+        return MultiCaptureResponse(
+            transaction_id=request.transaction_id,
+            overall_status="failed",
+            hand=request.hand,
+            guidance="Invalid hand selection. Use LEFT or RIGHT.",
+            results=[],
+        )
+    finger_ids = [f"{hand_prefix}_{k}" for k in _FOUR_FINGER_KEYS]
 
     # ── Decode image ──────────────────────────────────────────────────────────
     try:
@@ -88,13 +124,45 @@ def process_multi_capture(request: MultiCaptureRequest):
                    for fid in finger_ids]
         return MultiCaptureResponse(
             transaction_id=request.transaction_id,
-            overall_status="failed", hand=request.hand,
+            overall_status="failed", hand=hand_prefix,
             guidance=hand.guidance, results=results
+        )
+
+    detected_side = _normalize_side(hand.hand_side)
+    if detected_side and detected_side != hand_prefix:
+        results = [_failed(
+            fid,
+            "WRONG_HAND",
+            f"{detected_side.title()} hand detected while {hand_prefix.title()} is selected",
+            guidance=f"Show only your {hand_prefix.lower()} hand",
+        ) for fid in finger_ids]
+        return MultiCaptureResponse(
+            transaction_id=request.transaction_id,
+            overall_status="failed",
+            hand=hand_prefix,
+            guidance=f"Wrong hand detected. Please use your {hand_prefix.lower()} hand.",
+            results=results,
+        )
+
+    thumb_fc = hand.fingers.get("THUMB")
+    if thumb_fc is not None and thumb_fc.detected:
+        results = [_failed(
+            fid,
+            "THUMB_VISIBLE_IN_FOUR_FINGER_MODE",
+            "Thumb visible in 4-finger mode",
+            guidance="Please hide your thumb — show 4 fingers only",
+        ) for fid in finger_ids]
+        return MultiCaptureResponse(
+            transaction_id=request.transaction_id,
+            overall_status="failed",
+            hand=hand_prefix,
+            guidance="Please hide your thumb — show 4 fingers only",
+            results=results,
         )
 
     results: List[FingerResult] = []
 
-    for finger_key, finger_id in zip(_FINGER_KEYS, finger_ids):
+    for finger_key, finger_id in zip(_FOUR_FINGER_KEYS, finger_ids):
         fc = hand.fingers.get(finger_key)
 
         # Finger not visible in frame
@@ -207,7 +275,7 @@ def process_multi_capture(request: MultiCaptureRequest):
 
     return MultiCaptureResponse(
         transaction_id=request.transaction_id,
-        overall_status=overall, hand=request.hand,
+        overall_status=overall, hand=hand_prefix,
         guidance=guidance, results=results
     )
 
@@ -226,7 +294,15 @@ def analyze_frame(request: AnalyzeRequest):
     This prevents JPEG block artifacts and background pixels from
     triggering the moiré hard-gate and collapsing LBP texture scores.
     """
-    hand_prefix = request.hand.upper()
+    hand_prefix = _normalize_side(request.hand)
+    if hand_prefix is None:
+        return AnalyzeResponse(
+            hand_detected=False,
+            hand=request.hand,
+            guidance="Invalid hand selection. Use LEFT or RIGHT.",
+            fingers=[],
+        )
+    mode = (request.mode or "").strip().upper()
 
     try:
         bgr = image_processor.base64_to_mat(request.image_base64)
@@ -252,14 +328,57 @@ def analyze_frame(request: AnalyzeRequest):
             break
             
     if screen_bezel_detected:
-        return AnalyzeResponse(hand_detected=True, hand=request.hand,
+        return AnalyzeResponse(hand_detected=True, hand=hand_prefix,
                                guidance="Screen replay detected \u2014 phone border found", fingers=[])
 
     hand = hand_detector.detect_all_fingers(bgr)
 
     if not hand.detected:
-        return AnalyzeResponse(hand_detected=False, hand=request.hand,
+        return AnalyzeResponse(hand_detected=False, hand=hand_prefix,
                                guidance=hand.guidance or "No hand detected", fingers=[])
+
+    detected_side = _normalize_side(hand.hand_side)
+    if detected_side and detected_side != hand_prefix:
+        return AnalyzeResponse(
+            hand_detected=True,
+            hand=hand_prefix,
+            guidance=f"Wrong hand detected. Please use your {hand_prefix.lower()} hand.",
+            fingers=[],
+        )
+
+    visible = _extended_fingers(hand)
+    if mode in ("RIGHT_FOUR", "LEFT_FOUR") and "THUMB" in visible:
+        return AnalyzeResponse(
+            hand_detected=True,
+            hand=hand_prefix,
+            guidance="Please hide your thumb — show 4 fingers only",
+            fingers=[],
+        )
+    if mode == "SINGLE_FINGER" and len(visible) != 1:
+        return AnalyzeResponse(
+            hand_detected=True,
+            hand=hand_prefix,
+            guidance="Show exactly ONE finger clearly",
+            fingers=[],
+        )
+    if mode in ("LEFT_THUMB", "RIGHT_THUMB"):
+        expected_side = _side_from_mode(mode)
+        if expected_side and detected_side and detected_side != expected_side:
+            return AnalyzeResponse(
+                hand_detected=True,
+                hand=hand_prefix,
+                guidance=f"Wrong hand detected. Please use your {expected_side.lower()} hand.",
+                fingers=[],
+            )
+        non_thumb = [f for f in visible if f != "THUMB"]
+        if "THUMB" not in visible or non_thumb:
+            side = "left" if mode == "LEFT_THUMB" else "right"
+            return AnalyzeResponse(
+                hand_detected=True,
+                hand=hand_prefix,
+                guidance=f"Show only your {side} thumb — fold all other fingers",
+                fingers=[],
+            )
 
     fingers_out = []
 
@@ -319,7 +438,7 @@ def analyze_frame(request: AnalyzeRequest):
                 break
 
     return AnalyzeResponse(
-        hand_detected=True, hand=request.hand,
+        hand_detected=True, hand=hand_prefix,
         guidance=overall_guidance, fingers=fingers_out
     )
 
@@ -334,7 +453,7 @@ async def capture_stream(websocket: WebSocket, hand: str = "RIGHT"):
     No video file is saved or transmitted as a bulk file.
     """
     await websocket.accept()
-    hand_prefix = hand.upper()
+    hand_prefix = _normalize_side(hand) or "RIGHT"
     
     try:
         while True:
@@ -351,6 +470,16 @@ async def capture_stream(websocket: WebSocket, hand: str = "RIGHT"):
 
             h_img, w_img = bgr.shape[:2]
             hand_result = hand_detector.detect_all_fingers(bgr)
+            detected_side = _normalize_side(hand_result.hand_side)
+            if hand_result.detected and detected_side and detected_side != hand_prefix:
+                resp = AnalyzeResponse(
+                    hand_detected=True,
+                    hand=hand_prefix,
+                    guidance=f"Wrong hand detected. Please use your {hand_prefix.lower()} hand.",
+                    fingers=[],
+                )
+                await websocket.send_json(resp.model_dump() if hasattr(resp, 'model_dump') else resp.dict())
+                continue
 
             fingers_out = []
             if hand_result.detected:
@@ -422,7 +551,7 @@ async def analyze_video(
     hand detection + 10-layer liveness on each, and returns per-frame
     results plus the single best frame.
     """
-    hand_prefix = hand.upper()
+    hand_prefix = _normalize_side(hand) or "RIGHT"
 
     # Save uploaded video to a temp file so OpenCV can read it
     suffix = os.path.splitext(video.filename or ".mp4")[1]
@@ -462,6 +591,18 @@ async def analyze_video(
             timestamp = frame_idx / fps
             h_img, w_img = bgr.shape[:2]
             hand_result = hand_detector.detect_all_fingers(bgr)
+            detected_side = _normalize_side(hand_result.hand_side)
+            if hand_result.detected and detected_side and detected_side != hand_prefix:
+                frame_res = VideoFrameResult(
+                    frame_number=frame_idx,
+                    timestamp_sec=round(timestamp, 2),
+                    hand_detected=True,
+                    fingers=[],
+                    guidance=f"Wrong hand detected. Please use your {hand_prefix.lower()} hand.",
+                )
+                frame_results.append(frame_res)
+                frame_idx += 1
+                continue
 
             fingers_out = []
             if hand_result.detected:

@@ -247,18 +247,28 @@ LivenessResult LivenessDetector::evaluate(const cv::Mat& gray_sm,
                                           const cv::Mat& bgr_sm, 
                                           const cv::Mat& full_bgr, 
                                           const std::string& hand_mode) {
-    
-    LivenessResult res = evaluateInternal(gray_sm, bgr_sm, full_bgr, hand_mode);
-
-    // [STABILIZATION BYPASS] 
-    // Always force passed=true during final capture pipeline tuning.
-    // We log the reason for debugging, but don't block the user.
-    if (!res.passed) {
-        std::cout << "[LIVENESS BYPASS] Was rejected: " << res.reason << std::endl;
-        res.passed = true;
-        res.confidence = 0.5f; 
+    LivenessResult res{};
+    if (gray_sm.empty() || bgr_sm.empty() || full_bgr.empty()) {
+        res.passed = false;
+        res.reason = "Invalid frame input";
+        res.confidence = 0.0f;
+        res.isAiGenerated = false;
+        return res;
     }
 
+    try {
+        res = evaluateInternal(gray_sm, bgr_sm, full_bgr, hand_mode);
+    } catch (const cv::Exception&) {
+        res.passed = false;
+        res.reason = "Liveness engine error";
+        res.confidence = 0.0f;
+        res.isAiGenerated = false;
+    } catch (...) {
+        res.passed = false;
+        res.reason = "Liveness unknown error";
+        res.confidence = 0.0f;
+        res.isAiGenerated = false;
+    }
     return res;
 }
 

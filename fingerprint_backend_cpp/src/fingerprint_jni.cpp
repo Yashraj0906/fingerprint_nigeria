@@ -21,7 +21,9 @@ jobject createJavaHashMap(JNIEnv* env) {
 void putInMap(JNIEnv* env, jobject map, const char* key, jobject value) {
     jclass mapClass = env->FindClass("java/util/HashMap");
     jmethodID put = env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
-    env->CallObjectMethod(map, put, env->NewStringUTF(key), value);
+    jstring jKey = env->NewStringUTF(key);
+    env->CallObjectMethod(map, put, jKey, value);
+    env->DeleteLocalRef(jKey);
 }
 
 jobject toJavaBool(JNIEnv* env, bool value) {

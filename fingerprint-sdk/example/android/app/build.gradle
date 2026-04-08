@@ -19,7 +19,8 @@ android {
 
     defaultConfig {
         applicationId "com.example.fingerprint_example"
-        minSdk 21
+        // Must be >= fingerprint_sdk (MediaPipe Hand Landmarker)
+        minSdk 24
         targetSdk 34
         versionCode 1
         versionName "1.0"
@@ -41,24 +42,8 @@ android {
 }
 
 dependencies {
-    // Explicitly add flutter embedding to prevent Kotlin compilation errors
-    def flutterRoot = System.getenv("FLUTTER_ROOT")
-    if (flutterRoot == null) {
-        def properties = new Properties()
-        def propertiesFile = project.rootProject.file('local.properties')
-        if (propertiesFile.exists()) {
-            propertiesFile.withInputStream { properties.load(it) }
-            flutterRoot = properties.getProperty('flutter.sdk')
-        }
-    }
-    def engineVersion = "unknown"
-    if (flutterRoot != null) {
-        def engineVersionFile = new File(flutterRoot, "bin/internal/engine.version")
-        if (engineVersionFile.exists()) {
-            engineVersion = engineVersionFile.text.trim()
-        }
-    }
-    implementation "io.flutter:flutter_embedding_release:1.0.0-${engineVersion}"
+    // Note: Manual flutter_embedding dependency removed.
+    // The 'dev.flutter.flutter-gradle-plugin' handles this automatically.
 }
 
 repositories {

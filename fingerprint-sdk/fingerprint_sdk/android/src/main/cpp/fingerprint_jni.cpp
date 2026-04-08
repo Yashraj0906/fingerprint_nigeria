@@ -51,7 +51,9 @@ jobject createJavaHashMap(JNIEnv* env) {
 
 void putInMap(JNIEnv* env, jobject map, const char* key, jobject value) {
     initializeJniCache(env);
-    env->CallObjectMethod(map, g_mapPut, env->NewStringUTF(key), value);
+    jstring jKey = env->NewStringUTF(key);
+    env->CallObjectMethod(map, g_mapPut, jKey, value);
+    env->DeleteLocalRef(jKey);
 }
 
 jobject toJavaBool(JNIEnv* env, bool value) {

@@ -31,3 +31,8 @@ plugins {
 }
 
 include ":app"
+
+// Include OpenCV as a local module (official OpenCV recommended approach)
+def opencvSdk = 'C:/Users/Yashraj Kumar/fingerprint_nigeria/opencv_sdk_clean/OpenCV-android-sdk'
+include ':opencv'
+project(':opencv').projectDir = new File(opencvSdk + '/sdk')

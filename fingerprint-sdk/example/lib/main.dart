@@ -206,6 +206,8 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
   int? _textureId;
   FeedbackEvent? _feedback;
   bool _initialized = false;
+  bool _exiting = false;
+  StreamSubscription<FeedbackEvent>? _feedbackSub;
   
   @override
   void initState() {
@@ -215,6 +217,7 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
 
   @override
   void dispose() {
+    _feedbackSub?.cancel();
     _sdk.stopCapture();
     _sdk.dispose();
     super.dispose();
@@ -223,7 +226,7 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
   Future<void> _start() async {
     try {
       final tid = await _sdk.initialize(debugMode: false);
-      if (!mounted) return;
+      if (!mounted || _exiting) return;
       if (tid > 0) {
         setState(() { _textureId = tid; _initialized = true; });
       } else {
@@ -231,9 +234,10 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
       }
 
       await Future.delayed(const Duration(milliseconds: 500));
-      if (!mounted) return;
+      if (!mounted || _exiting) return;
 
-      _sdk.feedbackStream.listen((e) { 
+      _feedbackSub?.cancel();
+      _feedbackSub = _sdk.feedbackStream.listen((e) { 
           if (mounted) setState(() { _feedback = e; }); 
       });
 
@@ -244,18 +248,20 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
         options: const CaptureOptions(
           performLivenessCheck: true,
           performQualityCheck: true,
-          returnProcessedImage: true,
-          timeoutSeconds: 60,
+          returnProcessedImage: false,
+          returnRawImage: true,
+          timeoutSeconds: 45,
+          maxRetries: 3,
         ),
       );
       final response = await _sdk.startCapture(request);
-      if (mounted) {
+      if (mounted && !_exiting) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => ResultSummaryScreen(response: response, mode: widget.mode)),
         );
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_exiting) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Capture error: $e'), backgroundColor: Colors.red),
         );
@@ -268,6 +274,7 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
     CaptureMode.rightFour => [FingerId.rightIndex, FingerId.rightMiddle, FingerId.rightRing, FingerId.rightLittle],
     CaptureMode.leftThumb => [FingerId.leftThumb],
     CaptureMode.rightThumb => [FingerId.rightThumb],
+    // Placeholder id only — Android uses MediaPipe to label the result with the real finger (e.g. LEFT_RING).
     _ => [FingerId.rightIndex],
   };
 
@@ -275,10 +282,17 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
   Widget build(BuildContext context) {
     final expectedCount = _getFingersForMode(widget.mode).length;
     
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) {
+          await _cleanupCapture();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
           // 1. Camera Preview
           if (_textureId != null && _textureId! > 0)
              Positioned.fill(
@@ -299,7 +313,7 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     InkWell(
-                      onTap: () => Navigator.pop(context),
+                      onTap: _handleBack,
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(color: const Color(0xFFFFC107), borderRadius: BorderRadius.circular(12)),
@@ -316,7 +330,7 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     _Badge(
-                      label: 'Quality: ${(_feedback?.confidence ?? 0 * 100).toStringAsFixed(0)}%',
+                      label: 'Quality: ${(((_feedback?.confidence ?? 0.0) * 100)).toStringAsFixed(0)}%',
                       color: Colors.orange,
                     ),
                     _Badge(
@@ -343,24 +357,97 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFC107),
+                color: _feedback?.type == FeedbackType.warning
+                    ? const Color(0xFFE65100)
+                    : const Color(0xFFFFC107),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))],
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.check_circle, color: Colors.white, size: 24),
+                  Icon(
+                    _feedback?.type == FeedbackType.warning
+                        ? Icons.warning_amber_rounded
+                        : _feedback?.type == FeedbackType.processing
+                            ? Icons.center_focus_strong
+                            : Icons.check_circle,
+                    color: Colors.white,
+                    size: 24,
+                  ),
                   const SizedBox(width: 12),
-                  Text(_feedback?.message ?? "Place your hand inside the box",
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        if (_feedback?.fingerId != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              _feedback!.fingerId!.toLowerCase(),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        Text(
+                          _normalizedFeedbackMessage(
+                              _feedback?.message ?? "Place your hand inside the box"),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _handleBack() async {
+    if (_exiting) return;
+    _exiting = true;
+    await _cleanupCapture();
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _cleanupCapture() async {
+    await _feedbackSub?.cancel();
+    _feedbackSub = null;
+    await _sdk.stopCapture().catchError((_) {});
+    await _sdk.dispose().catchError((_) {});
+  }
+
+  String _normalizedFeedbackMessage(String raw) {
+    var msg = raw.trim();
+    if (msg.isEmpty) return "Place your hand inside the box";
+    // Show native wrong-hand / coaching text as-is (do not rewrite).
+    final lower = msg.toLowerCase();
+    if (lower.startsWith('wrong hand') || lower.contains('selected')) return msg;
+    final expected = widget.mode == CaptureMode.leftFour || widget.mode == CaptureMode.leftThumb
+        ? "LEFT"
+        : "RIGHT";
+    if (msg.toUpperCase().contains("LEFT_") || msg.toUpperCase().contains("RIGHT_")) {
+      msg = "Please use your $expected hand";
+    }
+    return msg;
   }
 }
 
@@ -428,17 +515,19 @@ class ResultSummaryScreen extends StatelessWidget {
             
             const SizedBox(height: 24),
             // Captured Image
-            if (successFingers.isNotEmpty)
+            if (successFingers.isNotEmpty && _bestPreviewImage(successFingers.first) != null)
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 24),
                 height: 240,
                 width: double.infinity,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
-                  image: DecorationImage(
-                    image: MemoryImage(base64Decode(successFingers.first.processedImage ?? '')),
-                    fit: BoxFit.cover,
-                  ),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Image.memory(
+                  base64Decode(_bestPreviewImage(successFingers.first)!),
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
                 ),
               ),
             
@@ -529,6 +618,14 @@ class ResultSummaryScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String? _bestPreviewImage(FingerResult finger) {
+    final raw = finger.rawImage;
+    if (raw != null && raw.isNotEmpty) return raw;
+    final processed = finger.processedImage;
+    if (processed != null && processed.isNotEmpty) return processed;
+    return null;
   }
 }
 

@@ -166,6 +166,13 @@ LivenessResult LivenessDetector::evaluate(const cv::Mat& gray_sm,
                                           const cv::Mat& full_bgr, 
                                           const std::string& hand_mode) {
     LivenessResult res{};
+    if (gray_sm.empty() || bgr_sm.empty() || full_bgr.empty()) {
+        res.passed = false;
+        res.reason = "Invalid frame input";
+        res.confidence = 0.0f;
+        res.isAiGenerated = false;
+        return res;
+    }
     res.passed = true;
     res.confidence = 0.95f;
     res.isAiGenerated = false;
