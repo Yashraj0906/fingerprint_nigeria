@@ -346,8 +346,11 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
 
           // 3. Scanner ROI Box Overlay
           Positioned.fill(
-            child: CustomPaint(
-              painter: ScannerOverlayPainter(mode: widget.mode),
+            child: IgnorePointer(
+              ignoring: true,
+              child: CustomPaint(
+                painter: ScannerOverlayPainter(mode: widget.mode),
+              ),
             ),
           ),
           
