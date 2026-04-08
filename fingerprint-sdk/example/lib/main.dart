@@ -11,7 +11,7 @@ class FingerprintApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'YellowSense Biometric SDK',
+        title: 'YellowSense Biometric',
         theme: ThemeData(
           colorSchemeSeed: const Color(0xFFFFC107),
           useMaterial3: true,
@@ -59,11 +59,9 @@ class _SelectionScreenState extends State<SelectionScreen> {
 
   void _onSelect(CaptureMode mode) {
     if (_isCapturing || !_initialized) return;
-
-    final txnId = "TXN-${DateTime.now().millisecondsSinceEpoch}";
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => LiveCaptureScreen(mode: mode, transactionId: txnId),
+        builder: (_) => LiveCaptureScreen(mode: mode),
       ),
     );
   }
@@ -75,8 +73,21 @@ class _SelectionScreenState extends State<SelectionScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFFFFC107),
         centerTitle: true,
-        title: const Text('YellowSense Biometric SDK',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            CircleAvatar(
+              radius: 14,
+              backgroundColor: Colors.white,
+              backgroundImage: AssetImage('assets/Logo.jpg'),
+            ),
+            SizedBox(width: 10),
+            Text(
+              'YellowSense Biometric',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
       ),
       body: SingleChildScrollView(
         child: Padding(
@@ -194,8 +205,7 @@ class _QuickButton extends StatelessWidget {
 
 class LiveCaptureScreen extends StatefulWidget {
   final CaptureMode mode;
-  final String? transactionId;
-  const LiveCaptureScreen({super.key, required this.mode, this.transactionId});
+  const LiveCaptureScreen({super.key, required this.mode});
 
   @override
   State<LiveCaptureScreen> createState() => _LiveCaptureScreenState();
@@ -242,7 +252,8 @@ class _LiveCaptureScreenState extends State<LiveCaptureScreen> {
       });
 
       final request = CaptureRequest(
-        transactionId: widget.transactionId ?? 'TXN-${DateTime.now().millisecondsSinceEpoch}',
+        // Always generate a fresh transaction id per capture run.
+        transactionId: 'TXN-${DateTime.now().millisecondsSinceEpoch}',
         captureMode: widget.mode,
         fingersRequested: _getFingersForMode(widget.mode),
         options: const CaptureOptions(
@@ -596,7 +607,9 @@ class ResultSummaryScreen extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: () => Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(builder: (_) => LiveCaptureScreen(mode: mode)),
+                          ),
                           child: const Text('Capture Again', style: TextStyle(color: Color(0xFFFFC107), fontWeight: FontWeight.bold)),
                         ),
                       ),

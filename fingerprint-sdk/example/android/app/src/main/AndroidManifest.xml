@@ -5,7 +5,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="true" />
 
     <application
-        android:label="Fingerprint Example"
+        android:label="YellowSense Biometric"
         android:name="${applicationName}"
         android:icon="@drawable/ic_launcher"
         android:theme="@style/LaunchTheme">
